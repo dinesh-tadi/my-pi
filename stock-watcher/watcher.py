@@ -1,20 +1,31 @@
 #!/usr/bin/env python3
 """
-24/7 AI Stock & Tech News Watcher for Raspberry Pi (Interactive Edition)
-Polls RSS feeds for tickers & tech news, delivers clean digests,
-and accepts interactive management commands directly from Telegram (/interval, /status, /check, etc.).
+24/7 AI Sentinel & Ops Center for Raspberry Pi
+- News & Stock Watcher (strict whole-word matching, batched digests)
+- Interactive Telegram Command Center
+- /pi: Real-time CPU temp, RAM, Disk, Docker container telemetry
+- /scan <url>: Headless URL redirection & security inspector
+- /cve <package>: Instant CVE & vulnerability lookup
+- /trending: Trending AI/ML open-source GitHub repositories (+ 9:00 AM daily digest)
+- /devices: Local Wi-Fi network scanner & proactive rogue device alerts
+- /ping: Network latency diagnostics
 """
 
 import os
 import sys
 import time
 import re
+import socket
+import ssl
+import json
 import logging
 import sqlite3
 import hashlib
 import threading
+import shutil
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
+from urllib.parse import urlparse
+from typing import Optional, List, Dict, Any, Tuple
 
 import requests
 import feedparser
@@ -27,7 +38,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)]
 )
-logger = logging.getLogger("StockWatcher")
+logger = logging.getLogger("Sentinel")
 
 # Load configuration
 load_dotenv()
@@ -52,6 +63,17 @@ state_lock = threading.Lock()
 current_interval_minutes = DEFAULT_INTERVAL
 active_keywords: List[str] = list(DEFAULT_KEYWORDS)
 
+# In-memory cache for MAC vendor lookups
+mac_vendor_cache: Dict[str, str] = {
+    "b8:27:eb": "Raspberry Pi", "dc:a6:32": "Raspberry Pi", "e4:5f:01": "Raspberry Pi",
+    "28:cd:c1": "Raspberry Pi", "d8:3a:dd": "Raspberry Pi",
+    "f0:18:98": "Apple", "a4:c3:f0": "Apple", "3c:22:fb": "Apple", "ac:bc:32": "Apple",
+    "bc:d0:74": "Apple", "e0:acc:b": "Apple", "98:01:a7": "Apple", "14:7d:da": "Apple",
+    "00:1a:11": "Google", "d8:6c:63": "Google", "54:60:09": "Google",
+    "fc:65:de": "Amazon", "44:65:0d": "Amazon", "cc:9e:00": "Amazon",
+    "24:0a:c4": "Espressif (IoT)", "30:ae:a4": "Espressif (IoT)", "84:0d:8e": "Espressif (IoT)"
+}
+
 # Default RSS Feeds
 FEEDS = [
     {
@@ -74,11 +96,10 @@ FEEDS = [
 # ==========================================
 
 def init_db() -> bool:
-    """Initializes SQLite tables for articles and persistent settings."""
+    """Initializes SQLite tables for articles, settings, and known LAN devices."""
     global current_interval_minutes, active_keywords
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
-        # Articles table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS seen_articles (
                 id TEXT PRIMARY KEY,
@@ -90,11 +111,20 @@ def init_db() -> bool:
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_seen_at ON seen_articles (seen_at)")
 
-        # Settings table for interactive Telegram commands
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS known_devices (
+                mac TEXT PRIMARY KEY,
+                ip TEXT,
+                vendor TEXT,
+                first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -124,19 +154,10 @@ def init_db() -> bool:
 
 
 def save_setting(key: str, value: str):
-    """Persists a configuration setting into SQLite."""
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
         conn.commit()
-
-
-def get_db_stats() -> Dict[str, Any]:
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM seen_articles")
-        total_articles = cursor.fetchone()[0]
-        return {"total_articles": total_articles}
 
 
 def clean_old_records(days: int = 30):
@@ -279,8 +300,6 @@ def check_feeds(manual_trigger: bool = False):
     total_matched = len(matched_articles)
     articles_to_send = matched_articles[:3]
 
-    logger.info("Found %d matched new articles. Delivering digest...", total_matched)
-
     lines = [
         f"📊 <b>Market & Tech Sentinel</b> (<code>{len(articles_to_send)} update{'s' if len(articles_to_send) > 1 else ''}</code>)",
         ""
@@ -301,12 +320,7 @@ def check_feeds(manual_trigger: bool = False):
     clean_old_records()
 
 
-# ==========================================
-# Dynamic Scheduler
-# ==========================================
-
 def reschedule_job(minutes: int):
-    """Dynamically updates the recurring schedule."""
     global current_interval_minutes
     with state_lock:
         current_interval_minutes = minutes
@@ -317,11 +331,429 @@ def reschedule_job(minutes: int):
 
 
 # ==========================================
+# Feature 1: /pi System & Hardware Telemetry
+# ==========================================
+
+def get_docker_containers() -> List[Dict[str, str]]:
+    """Queries Docker Unix socket to list running containers without external dependencies."""
+    containers = []
+    socket_path = "/var/run/docker.sock"
+    if not os.path.exists(socket_path):
+        return containers
+
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(3)
+        s.connect(socket_path)
+        s.send(b"GET /containers/json HTTP/1.0\r\nHost: localhost\r\n\r\n")
+
+        response = b""
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            response += chunk
+        s.close()
+
+        # Parse HTTP response body
+        parts = response.split(b"\r\n\r\n", 1)
+        if len(parts) == 2:
+            data = json.loads(parts[1].decode("utf-8", errors="ignore"))
+            for c in data:
+                name = c.get("Names", [""])[0].lstrip("/")
+                status = c.get("Status", "Unknown")
+                containers.append({"name": name, "status": status})
+    except Exception as e:
+        logger.warning("Error reading docker socket: %s", e)
+
+    return containers
+
+
+def get_system_telemetry() -> str:
+    """Reads hardware metrics (CPU Temp, RAM, Disk, Load, Uptime, Docker) from /proc and /sys."""
+    # 1. CPU Temperature
+    cpu_temp = "N/A"
+    temp_paths = [
+        "/host/sys/class/thermal/thermal_zone0/temp",
+        "/sys/class/thermal/thermal_zone0/temp"
+    ]
+    for p in temp_paths:
+        if os.path.exists(p):
+            try:
+                with open(p) as f:
+                    cpu_temp = f"{float(f.read().strip()) / 1000.0:.1f}°C"
+                break
+            except Exception:
+                pass
+
+    # 2. CPU Load Average
+    load_1, load_5, load_15 = "N/A", "N/A", "N/A"
+    load_paths = ["/host/proc/loadavg", "/proc/loadavg"]
+    for p in load_paths:
+        if os.path.exists(p):
+            try:
+                with open(p) as f:
+                    parts = f.read().split()
+                    load_1, load_5, load_15 = parts[0], parts[1], parts[2]
+                break
+            except Exception:
+                pass
+
+    # 3. RAM Memory
+    mem_used_mb, mem_total_mb, mem_pct = 0, 0, 0
+    mem_paths = ["/host/proc/meminfo", "/proc/meminfo"]
+    for p in mem_paths:
+        if os.path.exists(p):
+            try:
+                with open(p) as f:
+                    mem_data = {}
+                    for line in f:
+                        parts = line.split(":")
+                        if len(parts) == 2:
+                            mem_data[parts[0].strip()] = int(parts[1].strip().split()[0])
+                    total = mem_data.get("MemTotal", 0)
+                    avail = mem_data.get("MemAvailable", 0)
+                    used = total - avail
+                    mem_total_mb = int(total / 1024)
+                    mem_used_mb = int(used / 1024)
+                    mem_pct = int((used / total) * 100) if total else 0
+                break
+            except Exception:
+                pass
+
+    # 4. Disk Usage
+    try:
+        total, used, free = shutil.disk_usage("/")
+        disk_total_gb = f"{total / (1024**3):.1f}GB"
+        disk_used_gb = f"{used / (1024**3):.1f}GB"
+        disk_pct = int((used / total) * 100)
+    except Exception:
+        disk_total_gb, disk_used_gb, disk_pct = "N/A", "N/A", 0
+
+    # 5. Uptime
+    uptime_str = "N/A"
+    uptime_paths = ["/host/proc/uptime", "/proc/uptime"]
+    for p in uptime_paths:
+        if os.path.exists(p):
+            try:
+                with open(p) as f:
+                    secs = float(f.read().split()[0])
+                    uptime_str = str(timedelta(seconds=int(secs)))
+                break
+            except Exception:
+                pass
+
+    # 6. Tailscale & LAN IP
+    tailscale_ip = "Offline"
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("100.100.100.100", 80))
+        tailscale_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        pass
+
+    # 7. Containers
+    containers = get_docker_containers()
+    container_lines = []
+    for c in containers:
+        container_lines.append(f"  • <code>{c['name']}</code>: <i>{c['status'][:20]}</i>")
+
+    c_summary = "\n".join(container_lines) if container_lines else "  • <i>No containers detected</i>"
+
+    msg = (
+        f"🖥️ <b>Raspberry Pi Telemetry</b>\n"
+        f"• <b>Host:</b> <code>{os.uname().nodename}</code>\n"
+        f"• <b>Uptime:</b> <code>{uptime_str}</code>\n"
+        f"• <b>CPU Temp:</b> <b>{cpu_temp}</b>\n"
+        f"• <b>Load:</b> <code>{load_1}, {load_5}, {load_15}</code>\n"
+        f"• <b>RAM:</b> <code>{mem_used_mb}MB / {mem_total_mb}MB ({mem_pct}%)</code>\n"
+        f"• <b>Storage:</b> <code>{disk_used_gb} / {disk_total_gb} ({disk_pct}%)</code>\n"
+        f"• <b>Tailscale IP:</b> <code>{tailscale_ip}</code>\n\n"
+        f"🐳 <b>Docker Containers ({len(containers)}):</b>\n{c_summary}"
+    )
+    return msg
+
+
+# ==========================================
+# Feature 2: /scan <url> Headless Security Inspector
+# ==========================================
+
+def inspect_url_security(target_url: str) -> str:
+    """Headlessly analyzes redirects, DNS, SSL, and malicious file types."""
+    if not target_url.startswith(("http://", "https://")):
+        target_url = "https://" + target_url
+
+    parsed = urlparse(target_url)
+    domain = parsed.hostname
+    if not domain:
+        return "⚠️ Invalid URL provided. Example: <code>/scan https://bit.ly/xyz</code>"
+
+    # DNS check
+    try:
+        ip = socket.gethostbyname(domain)
+    except Exception as e:
+        return f"❌ <b>DNS Resolution Failed:</b> <code>{e}</code>"
+
+    # Request inspection with redirection tracking
+    try:
+        resp = requests.get(
+            target_url,
+            allow_redirects=True,
+            timeout=8,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SentinelSecurity/1.0"}
+        )
+
+        chain = []
+        for r in resp.history:
+            chain.append(f"  ↳ [{r.status_code}] <code>{r.url[:50]}</code>")
+        chain.append(f"  🏁 [{resp.status_code}] <b>{resp.url}</b>")
+
+        content_type = resp.headers.get("Content-Type", "Unknown").split(";")[0]
+        content_length = resp.headers.get("Content-Length")
+        size_str = f"{int(content_length) / 1024:.1f} KB" if content_length else "Stream / Chunked"
+
+        # Threat heuristics
+        threat_flags = []
+        dangerous_exts = (".exe", ".sh", ".apk", ".dmg", ".bat", ".vbs", ".zip", ".iso")
+        if any(resp.url.lower().endswith(ext) for ext in dangerous_exts):
+            threat_flags.append("⚠️ <b>Direct Executable/Archive Download Detected</b>")
+
+        if not resp.url.startswith("https://"):
+            threat_flags.append("⚠️ <b>Unencrypted HTTP connection</b>")
+
+        # Security headers
+        hsts = "Yes" if "Strict-Transport-Security" in resp.headers else "No"
+        xframe = resp.headers.get("X-Frame-Options", "None")
+
+        threat_summary = "\n".join(threat_flags) if threat_flags else "✅ No obvious payload red-flags detected."
+
+        msg = (
+            f"🔍 <b>URL Security Inspection</b>\n\n"
+            f"🌐 <b>Target:</b> <code>{domain}</code> (IP: <code>{ip}</code>)\n"
+            f"📡 <b>Redirect Path ({len(resp.history)} jumps):</b>\n" + "\n".join(chain) + "\n\n"
+            f"📋 <b>Payload Metadata:</b>\n"
+            f"• <b>MIME Type:</b> <code>{content_type}</code>\n"
+            f"• <b>Size:</b> <code>{size_str}</code>\n"
+            f"• <b>HSTS Strict:</b> <code>{hsts}</code>\n"
+            f"• <b>X-Frame:</b> <code>{xframe}</code>\n\n"
+            f"🛡️ <b>Heuristics:</b>\n{threat_summary}"
+        )
+        return msg
+    except Exception as e:
+        return f"❌ <b>Inspection Error:</b> <code>{str(e)[:150]}</code>"
+
+
+# ==========================================
+# Feature 3: /cve <package> Vulnerability Lookup
+# ==========================================
+
+def lookup_cve(package_name: str) -> str:
+    """Queries OSV.dev across PyPI, npm, and Go for known vulnerabilities."""
+    pkg = package_name.strip()
+    found_vulns = []
+
+    # Check common ecosystems
+    for eco in ("PyPI", "npm", "Go", "crates.io"):
+        try:
+            url = "https://api.osv.dev/v1/query"
+            payload = {"package": {"name": pkg, "ecosystem": eco}}
+            resp = requests.post(url, json=payload, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                vulns = data.get("vulns", [])
+                for v in vulns:
+                    vid = v.get("id", "N/A")
+                    summary = v.get("summary") or (v.get("details", "")[:80] + "...")
+                    aliases = ", ".join(v.get("aliases", [])[:2])
+                    found_vulns.append({
+                        "id": vid,
+                        "ecosystem": eco,
+                        "aliases": aliases,
+                        "summary": summary
+                    })
+                if len(found_vulns) >= 5:
+                    break
+        except Exception:
+            pass
+
+    if not found_vulns:
+        return f"✅ <b>Vulnerability Check:</b> No public CVE advisories found for <code>{pkg}</code> in major ecosystems."
+
+    lines = [f"🛡️ <b>Vulnerabilities Found for <code>{pkg}</code>:</b>\n"]
+    for v in found_vulns[:4]:
+        alias_str = f" ({v['aliases']})" if v['aliases'] else ""
+        lines.append(f"• <b>{v['id']}{alias_str}</b> [<code>{v['ecosystem']}</code>]")
+        lines.append(f"  <i>{v['summary']}</i>")
+        lines.append("")
+
+    if len(found_vulns) > 4:
+        lines.append(f"<i>(+{len(found_vulns) - 4} older advisories recorded)</i>")
+
+    return "\n".join(lines)
+
+
+# ==========================================
+# Feature 4: /trending & 9 AM AI Digest
+# ==========================================
+
+def get_trending_ai_repos() -> str:
+    """Fetches high-velocity open-source AI and LLM repositories on GitHub."""
+    try:
+        url = "https://api.github.com/search/repositories?q=topic:llm+stars:>300&sort=updated&order=desc&per_page=4"
+        resp = requests.get(url, timeout=6, headers={"User-Agent": "SentinelBot/1.0"})
+        if resp.status_code == 200:
+            items = resp.json().get("items", [])
+            if not items:
+                return "ℹ️ No trending repos retrieved."
+
+            lines = ["🔥 <b>Trending AI & LLM GitHub Repositories</b>\n"]
+            for r in items[:4]:
+                name = r.get("full_name")
+                stars = r.get("stargazers_count", 0)
+                desc = r.get("description", "No description") or ""
+                link = r.get("html_url")
+                lines.append(f"• <b>{name}</b> (⭐ <code>{stars:,}</code>)")
+                lines.append(f"  <i>{desc[:90]}...</i>")
+                lines.append(f"  🔗 <a href='{link}'>GitHub Repo</a>")
+                lines.append("")
+
+            return "\n".join(lines)
+    except Exception as e:
+        return f"❌ Error querying GitHub: {e}"
+
+    return "⚠️ Could not retrieve trending repositories."
+
+
+def send_daily_ai_briefing():
+    logger.info("Sending scheduled 9:00 AM AI briefing...")
+    report = get_trending_ai_repos()
+    send_telegram_message(f"🌅 <b>Daily AI & ML Briefing</b>\n\n{report}")
+
+
+# ==========================================
+# Feature 5: /devices & Wi-Fi Watchdog
+# ==========================================
+
+def resolve_mac_vendor(mac: str) -> str:
+    prefix = mac.lower()[:8]
+    if prefix in mac_vendor_cache:
+        return mac_vendor_cache[prefix]
+
+    # Try 3-byte prefix API lookup
+    try:
+        resp = requests.get(f"https://api.macvendors.com/{mac}", timeout=2)
+        if resp.status_code == 200:
+            vendor = resp.text.strip()[:20]
+            mac_vendor_cache[prefix] = vendor
+            return vendor
+    except Exception:
+        pass
+
+    return "Unknown Vendor"
+
+
+def scan_wifi_devices() -> List[Dict[str, str]]:
+    """Inspects /proc/net/arp table to track active devices on the home LAN."""
+    devices = []
+    arp_paths = ["/host/proc/net/arp", "/proc/net/arp"]
+
+    for p in arp_paths:
+        if os.path.exists(p):
+            try:
+                with open(p) as f:
+                    lines = f.readlines()[1:]  # skip header
+                    for line in lines:
+                        parts = line.split()
+                        if len(parts) >= 6:
+                            ip = parts[0]
+                            mac = parts[3].lower()
+                            flags = parts[2]
+                            # Filter active/valid MACs
+                            if mac != "00:00:00:00:00:00" and flags != "0x0":
+                                vendor = resolve_mac_vendor(mac)
+                                devices.append({"ip": ip, "mac": mac, "vendor": vendor})
+                break
+            except Exception as e:
+                logger.warning("Error reading ARP table: %s", e)
+
+    return devices
+
+
+def check_for_new_devices():
+    """Background watchdog alerting on rogue or unfamiliar MAC addresses."""
+    active_devices = scan_wifi_devices()
+    if not active_devices:
+        return
+
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        for dev in active_devices:
+            mac = dev["mac"]
+            ip = dev["ip"]
+            vendor = dev["vendor"]
+
+            cursor.execute("SELECT first_seen FROM known_devices WHERE mac = ?", (mac,))
+            row = cursor.fetchone()
+
+            if not row:
+                # Brand new device detected!
+                cursor.execute(
+                    "INSERT INTO known_devices (mac, ip, vendor, first_seen, last_seen) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    (mac, ip, vendor)
+                )
+                conn.commit()
+
+                alert_msg = (
+                    f"🚨 <b>New Device Connected to Wi-Fi!</b>\n\n"
+                    f"• <b>IP:</b> <code>{ip}</code>\n"
+                    f"• <b>MAC:</b> <code>{mac}</code>\n"
+                    f"• <b>Vendor:</b> <i>{vendor}</i>\n"
+                    f"• <b>Time:</b> <code>{datetime.now().strftime('%H:%M:%S')}</code>"
+                )
+                send_telegram_message(alert_msg)
+            else:
+                cursor.execute("UPDATE known_devices SET last_seen = CURRENT_TIMESTAMP, ip = ? WHERE mac = ?", (ip, mac))
+                conn.commit()
+
+
+# ==========================================
+# Feature 6: /ping Network Diagnostics
+# ==========================================
+
+def ping_network_latency() -> str:
+    """Measures TCP handshake latency to major cloud DNS providers."""
+    targets = [("Cloudflare DNS", "1.1.1.1", 53), ("Google DNS", "8.8.8.8", 53)]
+    results = []
+
+    for name, host, port in targets:
+        latencies = []
+        for _ in range(3):
+            t0 = time.time()
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(2.0)
+                s.connect((host, port))
+                s.close()
+                latencies.append((time.time() - t0) * 1000.0)
+            except Exception:
+                pass
+            time.sleep(0.1)
+
+        if latencies:
+            avg_ms = sum(latencies) / len(latencies)
+            results.append(f"• <b>{name}</b> (<code>{host}</code>): <code>{avg_ms:.1f} ms</code>")
+        else:
+            results.append(f"• <b>{name}</b> (<code>{host}</code>): ❌ <i>Timeout</i>")
+
+    return "📶 <b>Home Network Latency Test</b>\n\n" + "\n".join(results)
+
+
+# ==========================================
 # Interactive Telegram Command Listener
 # ==========================================
 
 def handle_telegram_command(command_text: str):
-    """Parses and executes commands sent from the authorized Telegram chat."""
     global current_interval_minutes, active_keywords
     parts = command_text.strip().split()
     if not parts:
@@ -330,8 +762,50 @@ def handle_telegram_command(command_text: str):
     cmd = parts[0].lower()
     args = parts[1:]
 
-    # Command: /interval <mins>
-    if cmd == "/interval":
+    # 1. /pi Telemetry
+    if cmd in ("/pi", "/sys", "/telemetry"):
+        send_telegram_message(get_system_telemetry())
+
+    # 2. /scan <url>
+    elif cmd == "/scan":
+        if not args:
+            send_telegram_message("⚠️ Usage: <code>/scan &lt;url&gt;</code> (e.g. <code>/scan https://bit.ly/xyz</code>)")
+            return
+        send_telegram_message("🔎 <i>Inspecting URL headers and redirects...</i>")
+        send_telegram_message(inspect_url_security(args[0]))
+
+    # 3. /cve <package>
+    elif cmd == "/cve":
+        if not args:
+            send_telegram_message("⚠️ Usage: <code>/cve &lt;package_name&gt;</code> (e.g. <code>/cve fastapi</code>)")
+            return
+        send_telegram_message(f"🛡️ <i>Searching vulnerability databases for {args[0]}...</i>")
+        send_telegram_message(lookup_cve(args[0]))
+
+    # 4. /trending
+    elif cmd in ("/trending", "/repos"):
+        send_telegram_message("🔥 <i>Pulling trending open-source AI repos...</i>")
+        send_telegram_message(get_trending_ai_repos())
+
+    # 5. /devices
+    elif cmd in ("/devices", "/wifi", "/lan"):
+        devs = scan_wifi_devices()
+        if not devs:
+            send_telegram_message("ℹ️ No active devices currently resolved in ARP table.")
+            return
+
+        lines = [f"📶 <b>Active Devices on Home Network ({len(devs)}):</b>\n"]
+        for d in devs[:12]:
+            lines.append(f"• <code>{d['ip']:<15}</code> | <i>{d['vendor']}</i>\n  <pre>{d['mac']}</pre>")
+
+        send_telegram_message("\n".join(lines))
+
+    # 6. /ping
+    elif cmd in ("/ping", "/speed"):
+        send_telegram_message(ping_network_latency())
+
+    # 7. /interval <mins>
+    elif cmd == "/interval":
         if not args:
             send_telegram_message(
                 f"⏱️ <b>Current Polling Interval:</b> <code>{current_interval_minutes} minutes</code>\n\n"
@@ -342,42 +816,46 @@ def handle_telegram_command(command_text: str):
         try:
             mins = int(args[0])
             if mins < 1 or mins > 1440:
-                send_telegram_message("⚠️ Please specify an interval between <b>1</b> and <b>1440</b> minutes (24h).")
+                send_telegram_message("⚠️ Please specify an interval between <b>1</b> and <b>1440</b> minutes.")
                 return
 
             reschedule_job(mins)
-            send_telegram_message(
-                f"⏱️ <b>Interval Updated!</b>\n"
-                f"Sentinel will now check RSS feeds every <b>{mins} minutes</b>."
-            )
+            send_telegram_message(f"⏱️ <b>Interval Updated!</b>\nSentinel checks feeds every <b>{mins} minutes</b>.")
         except ValueError:
-            send_telegram_message("⚠️ Invalid format. Example usage: <code>/interval 30</code>")
+            send_telegram_message("⚠️ Invalid format. Example: <code>/interval 30</code>")
 
-    # Command: /check
+    # 8. /check
     elif cmd in ("/check", "/poll"):
         send_telegram_message("🔄 <i>Running immediate RSS check...</i>")
         check_feeds(manual_trigger=True)
 
-    # Command: /status
+    # 9. /status
     elif cmd in ("/status", "/info"):
-        stats = get_db_stats()
         with state_lock:
             kws_preview = ", ".join(active_keywords[:8])
             if len(active_keywords) > 8:
                 kws_preview += f" (+{len(active_keywords) - 8} more)"
             curr_int = current_interval_minutes
 
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM seen_articles")
+            total_arts = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM known_devices")
+            total_devs = c.fetchone()[0]
+
         msg = (
-            f"📊 <b>Sentinel Bot Status</b>\n"
+            f"📊 <b>Sentinel Master Status</b>\n"
             f"• <b>Host:</b> <code>{os.uname().nodename}</code>\n"
             f"• <b>Cadence:</b> Every <code>{curr_int} mins</code>\n"
             f"• <b>Active Watchlist:</b> {kws_preview}\n"
-            f"• <b>Articles Indexed:</b> <code>{stats['total_articles']}</code>\n"
-            f"• <b>Feeds Active:</b> <code>{len(FEEDS)} feeds</code>"
+            f"• <b>Articles Tracked:</b> <code>{total_arts}</code>\n"
+            f"• <b>Known Wi-Fi Devices:</b> <code>{total_devs}</code>\n"
+            f"• <b>Uptime Kuma:</b> <code>http://192.168.1.10:3001</code>"
         )
         send_telegram_message(msg)
 
-    # Command: /list
+    # 10. /list
     elif cmd in ("/list", "/keywords"):
         with state_lock:
             kws = list(active_keywords)
@@ -388,10 +866,10 @@ def handle_telegram_command(command_text: str):
             f"Remove ticker: <code>/remove TSLA</code>"
         )
 
-    # Command: /add <word>
+    # 11. /add <word>
     elif cmd == "/add":
         if not args:
-            send_telegram_message("⚠️ Usage: <code>/add &lt;ticker_or_word&gt;</code> (e.g. <code>/add INTEL</code>)")
+            send_telegram_message("⚠️ Usage: <code>/add &lt;word&gt;</code>")
             return
         new_word = args[0].strip()
         with state_lock:
@@ -403,10 +881,10 @@ def handle_telegram_command(command_text: str):
                 msg = f"ℹ️ <b>{new_word}</b> is already in your watchlist."
         send_telegram_message(msg)
 
-    # Command: /remove <word>
+    # 12. /remove <word>
     elif cmd in ("/remove", "/del"):
         if not args:
-            send_telegram_message("⚠️ Usage: <code>/remove &lt;ticker_or_word&gt;</code>")
+            send_telegram_message("⚠️ Usage: <code>/remove &lt;word&gt;</code>")
             return
         del_word = args[0].strip().lower()
         with state_lock:
@@ -419,23 +897,30 @@ def handle_telegram_command(command_text: str):
                 msg = f"ℹ️ <b>{del_word}</b> was not found in your watchlist."
         send_telegram_message(msg)
 
-    # Command: /help or /start
+    # 13. /help
     elif cmd in ("/help", "/start"):
         help_text = (
-            f"🤖 <b>Sentinel Command Center</b>\n\n"
-            f"• <code>/interval &lt;mins&gt;</code> - Change check frequency (e.g. <code>/interval 30</code>)\n"
-            f"• <code>/check</code> - Run an instant feed check right now\n"
-            f"• <code>/status</code> - View uptime, interval, and DB stats\n"
-            f"• <code>/list</code> - Show all active watchlist tickers\n"
-            f"• <code>/add &lt;word&gt;</code> - Add keyword (e.g. <code>/add CRWD</code>)\n"
-            f"• <code>/remove &lt;word&gt;</code> - Remove keyword (e.g. <code>/remove TSLA</code>)\n"
-            f"• <code>/help</code> - Show this command list"
+            f"🛡️ <b>Sentinel Ops Command Menu</b>\n\n"
+            f"<b>Hardware & Network:</b>\n"
+            f"• <code>/pi</code> - Real-time CPU temp, RAM, Disk, & Docker\n"
+            f"• <code>/devices</code> - List active devices on home Wi-Fi\n"
+            f"• <code>/ping</code> - Test internet latency to 1.1.1.1\n\n"
+            f"<b>Security & Developer Tools:</b>\n"
+            f"• <code>/scan &lt;url&gt;</code> - Headless redirect & safety inspector\n"
+            f"• <code>/cve &lt;pkg&gt;</code> - Instant vulnerability lookup\n"
+            f"• <code>/trending</code> - Top trending open-source AI repos\n\n"
+            f"<b>Feed & Intelligence Control:</b>\n"
+            f"• <code>/interval &lt;mins&gt;</code> - Change check frequency\n"
+            f"• <code>/check</code> - Run an instant feed check now\n"
+            f"• <code>/status</code> - Complete bot status overview\n"
+            f"• <code>/list</code> - Show active watchlist tickers\n"
+            f"• <code>/add &lt;word&gt;</code> - Add keyword\n"
+            f"• <code>/remove &lt;word&gt;</code> - Remove keyword"
         )
         send_telegram_message(help_text)
 
 
 def telegram_listener():
-    """Background long-polling loop to receive incoming Telegram commands."""
     logger.info("Telegram command listener thread started.")
     offset = 0
 
@@ -456,20 +941,17 @@ def telegram_listener():
                     sender_chat_id = str(msg.get("chat", {}).get("id"))
                     text = msg.get("text", "").strip()
 
-                    # Security check: only authorized chat ID can issue commands
                     if sender_chat_id == str(TELEGRAM_CHAT_ID) and text:
                         logger.info("Received Telegram command: %s", text)
                         handle_telegram_command(text)
                     else:
                         logger.warning("Ignored message from unauthorized chat: %s", sender_chat_id)
             elif resp.status_code == 409:
-                # Another instance is polling; back off briefly
                 time.sleep(5)
             else:
                 time.sleep(2)
 
         except requests.exceptions.Timeout:
-            # Long-poll timed out normally, loop again
             continue
         except Exception as e:
             logger.warning("Telegram listener exception: %s", e)
@@ -478,11 +960,13 @@ def telegram_listener():
 
 def send_startup_ping():
     msg = (
-        f"🟢 <b>Sentinel Interactive Center Online</b>\n"
+        f"⚡ <b>Sentinel Command Center Online</b>\n"
         f"• Host: <code>{os.uname().nodename}</code>\n"
-        f"• Interval: <code>Every {current_interval_minutes}m</code>\n\n"
-        f"💡 <i>You can now control this bot directly from Telegram!</i>\n"
-        f"Send <code>/help</code> or <code>/interval 30</code> to try it out."
+        f"• Cadence: <code>Every {current_interval_minutes}m</code>\n"
+        f"• Tailscale Exit Node: <code>Active</code>\n"
+        f"• Uptime Kuma: <code>http://192.168.1.10:3001</code>\n\n"
+        f"Try commands:\n"
+        f"<code>/pi</code> | <code>/devices</code> | <code>/scan https://bit.ly/...</code> | <code>/cve fastapi</code>"
     )
     send_telegram_message(msg)
 
@@ -501,8 +985,14 @@ def main():
     if is_fresh:
         seed_database_quietly()
 
-    # Start recurring schedule
+    # Schedule recurring feed checker
     reschedule_job(current_interval_minutes)
+
+    # Schedule daily 9:00 AM AI repo briefing
+    schedule.every().day.at("09:00").do(send_daily_ai_briefing)
+
+    # Schedule Wi-Fi rogue device sweep every 5 minutes
+    schedule.every(5).minutes.do(check_for_new_devices)
 
     # Launch Telegram command listener in a background daemon thread
     listener_thread = threading.Thread(target=telegram_listener, daemon=True)

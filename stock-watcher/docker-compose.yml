@@ -3,11 +3,14 @@ services:
     build: .
     container_name: stock-watcher
     restart: unless-stopped
+    network_mode: host
     env_file:
       - .env
     volumes:
-      # Persist SQLite database across container restarts
       - ./data:/app/data
+      - /sys:/host/sys:ro
+      - /proc:/host/proc:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - PYTHONUNBUFFERED=1
     logging:
