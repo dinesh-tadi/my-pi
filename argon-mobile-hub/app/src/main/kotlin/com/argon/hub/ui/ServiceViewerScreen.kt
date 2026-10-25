@@ -1,18 +1,30 @@
 package com.argon.hub.ui
 
 import android.annotation.SuppressLint
+import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.net.http.SslError
+import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.os.Message
+import android.provider.MediaStore
 import android.view.ViewGroup
+import android.webkit.JavascriptInterface
+import android.webkit.PermissionRequest
 import android.webkit.SslErrorHandler
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,12 +44,50 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.viewinterop.AndroidView
+
+class AndroidBridge(private val context: Context) {
+    @JavascriptInterface
+    fun onBlobDownload(dataUrl: String, filename: String, mimeType: String) {
+        try {
+            val base64 = dataUrl.substringAfter("base64,")
+            val bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+            val cleanName = if (filename.isNotBlank()) filename else "download_${System.currentTimeMillis()}"
+            val cleanMime = if (mimeType.isNotBlank()) mimeType else "application/octet-stream"
+
+            val resolver = context.contentResolver
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, cleanName)
+                put(MediaStore.MediaColumns.MIME_TYPE, cleanMime)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            if (uri != null) {
+                resolver.openOutputStream(uri)?.use { stream ->
+                    stream.write(bytes)
+                }
+                Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(context, "Saved to Downloads: $cleanName", Toast.LENGTH_LONG).show()
+                }
+            } else {
+                Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(context, "Could not save file to Downloads", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(context, "Download error: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
@@ -51,8 +101,18 @@ fun ServiceViewerScreen(
 ) {
     val context = LocalContext.current
     var progress by remember { mutableIntStateOf(0) }
-    var currentUrl by remember { androidx.compose.runtime.mutableStateOf(url) }
-    var webViewRef by remember { androidx.compose.runtime.mutableStateOf<WebView?>(null) }
+    var currentUrl by remember { mutableStateOf(url) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var fileUploadCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
+
+    val fileChooserLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val intent = result.data
+        val results = WebChromeClient.FileChooserParams.parseResult(result.resultCode, intent)
+        fileUploadCallback?.onReceiveValue(results)
+        fileUploadCallback = null
+    }
 
     BackHandler {
         if (webViewRef?.canGoBack() == true) {
@@ -137,7 +197,12 @@ fun ServiceViewerScreen(
                             cacheMode = WebSettings.LOAD_DEFAULT
                             setSupportMultipleWindows(true)
                             javaScriptCanOpenWindowsAutomatically = true
+                            allowFileAccess = true
+                            allowContentAccess = true
+                            mediaPlaybackRequiresUserGesture = false
                         }
+
+                        addJavascriptInterface(AndroidBridge(ctx), "AndroidBridge")
 
                         val targetHost = if (activeHost.isNotBlank()) activeHost else "192.168.1.10"
 
@@ -180,8 +245,8 @@ fun ServiceViewerScreen(
                                 if (finishedUrl != null) {
                                     currentUrl = finishedUrl
                                 }
-                                // Inject client-side link rewrite script for single-page apps / dashboards
-                                val js = """
+                                // 1. Inject client-side link rewrite script for single-page apps / dashboards
+                                val linkJs = """
                                     (function() {
                                         var target = '$targetHost';
                                         function rewriteLinks() {
@@ -197,13 +262,68 @@ fun ServiceViewerScreen(
                                         setTimeout(rewriteLinks, 3000);
                                     })();
                                 """.trimIndent()
-                                view?.evaluateJavascript(js, null)
+                                view?.evaluateJavascript(linkJs, null)
+
+                                // 2. Inject blob & data-url download hook for PairDrop / web file downloads
+                                val blobJs = """
+                                    (function() {
+                                        if (window.__argonBlobHookInstalled) return;
+                                        window.__argonBlobHookInstalled = true;
+                                        var originalClick = HTMLAnchorElement.prototype.click;
+                                        HTMLAnchorElement.prototype.click = function() {
+                                            if (this.href && (this.href.startsWith('blob:') || this.href.startsWith('data:'))) {
+                                                var filename = this.download || 'download_' + Date.now();
+                                                fetch(this.href)
+                                                    .then(function(res) { return res.blob(); })
+                                                    .then(function(blob) {
+                                                        var reader = new FileReader();
+                                                        reader.onloadend = function() {
+                                                            if (window.AndroidBridge && window.AndroidBridge.onBlobDownload) {
+                                                                window.AndroidBridge.onBlobDownload(reader.result, filename, blob.type || '');
+                                                            }
+                                                        };
+                                                        reader.readAsDataURL(blob);
+                                                    })
+                                                    .catch(function(err) {
+                                                        console.error('Blob capture error', err);
+                                                    });
+                                            }
+                                            return originalClick.apply(this, arguments);
+                                        };
+                                    })();
+                                """.trimIndent()
+                                view?.evaluateJavascript(blobJs, null)
                             }
                         }
 
                         webChromeClient = object : WebChromeClient() {
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 progress = newProgress
+                            }
+
+                            override fun onPermissionRequest(request: PermissionRequest?) {
+                                request?.grant(request.resources)
+                            }
+
+                            override fun onShowFileChooser(
+                                view: WebView?,
+                                filePathCallback: ValueCallback<Array<Uri>>?,
+                                fileChooserParams: FileChooserParams?
+                            ): Boolean {
+                                fileUploadCallback?.onReceiveValue(null)
+                                fileUploadCallback = filePathCallback
+                                try {
+                                    val intent = fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                                        type = "*/*"
+                                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                                    }
+                                    fileChooserLauncher.launch(intent)
+                                    return true
+                                } catch (e: Exception) {
+                                    fileUploadCallback?.onReceiveValue(null)
+                                    fileUploadCallback = null
+                                    return false
+                                }
                             }
 
                             override fun onCreateWindow(

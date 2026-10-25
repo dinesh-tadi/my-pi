@@ -1,7 +1,7 @@
 {
-  "versionCode": 6,
-  "versionName": "1.4",
-  "releaseDate": "2026-10-25T13:18:01Z",
+  "versionCode": 7,
+  "versionName": "1.5",
+  "releaseDate": "2026-10-25T13:30:44Z",
   "apkPath": "/argon-hub.apk",
-  "releaseNotes": "Added PairDrop local file transfer"
+  "releaseNotes": "Enable file upload and blob download in WebView"
 }
