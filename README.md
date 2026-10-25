@@ -27,7 +27,6 @@ Send any of these commands to **Pi Sentinel** in Telegram:
 ### Security & Developer Tools
 * `/scan <url>` — Headless redirect chain tracker and payload risk inspector
 * `/web <url>` — Fetches any article/blog and creates a clean executive summary
-* `/ask <prompt>` — Direct AI Q&A via free Gemini Flash
 * `/cve <package>` — Instant vulnerability search across OSV and NVD
 * `/trending` — Top trending open-source AI/LLM GitHub repositories
 

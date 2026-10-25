@@ -986,30 +986,6 @@ def extract_web_content(target_url: str) -> str:
         return f"❌ Error extracting web content: {str(e)[:150]}"
 
 
-def answer_ai_query(query: str) -> str:
-    if not GEMINI_API_KEY:
-        return (
-            "ℹ️ <b>AI Q&A is currently inactive:</b>\n"
-            "To use <code>/ask</code>, add a free Google Gemini API key to <code>stock-watcher/.env</code>.\n"
-            "(Free at <a href='https://aistudio.google.com/'>aistudio.google.com</a> with zero credit card needed)."
-        )
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-    prompt = f"You are Sentinel, a sharp AI assistant running on a home Raspberry Pi. Answer concisely in 2-4 sentences:\n\n{query}"
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 300}
-    }
-    try:
-        resp = requests.post(url, json=payload, timeout=12)
-        if resp.status_code == 200:
-            return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        else:
-            return f"❌ AI Error (Status {resp.status_code})"
-    except Exception as e:
-        return f"❌ AI request failed: {e}"
-
-
 # ==========================================
 # Interactive Telegram Command Listener
 # ==========================================
@@ -1117,16 +1093,7 @@ def handle_telegram_command(command_text: str):
         send_telegram_message("📖 <i>Extracting article & generating executive summary...</i>")
         send_telegram_message(extract_web_content(args[0]))
 
-    # 8. /ask <prompt>
-    elif cmd in ("/ask", "/ai"):
-        if not args:
-            send_telegram_message("⚠️ Usage: <code>/ask &lt;your question&gt;</code>")
-            return
-        prompt_text = " ".join(args)
-        send_telegram_message("🤖 <i>Thinking...</i>")
-        send_telegram_message(answer_ai_query(prompt_text))
-
-    # 7. /interval <mins>
+    # 8. /interval <mins>
     elif cmd == "/interval":
         if not args:
             send_telegram_message(
@@ -1261,7 +1228,6 @@ def handle_telegram_command(command_text: str):
             f"<b>Security & Developer Tools:</b>\n"
             f"• <code>/scan &lt;url&gt;</code> - Headless redirect & safety inspector\n"
             f"• <code>/web &lt;url&gt;</code> - Extract & summarize any article\n"
-            f"• <code>/ask &lt;question&gt;</code> - Instant AI query\n"
             f"• <code>/cve &lt;pkg&gt;</code> - Instant vulnerability lookup\n"
             f"• <code>/trending</code> - Top trending open-source AI repos\n\n"
             f"<b>Feed & Intelligence Control:</b>\n"
