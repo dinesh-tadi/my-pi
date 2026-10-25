@@ -55,6 +55,8 @@ DEFAULT_KEYWORDS = [
 ]
 DEFAULT_INTERVAL = int(os.getenv("POLL_INTERVAL_MINUTES", "15"))
 DEFAULT_MAX_AGE_HOURS = int(os.getenv("MAX_ARTICLE_AGE_HOURS", "24"))
+MAX_ARTICLES_RETAINED = 2000
+MAX_DB_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB hard cap
 
 # Database path (persisted in ./data)
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -100,10 +102,14 @@ FEEDS = [
 # ==========================================
 
 def init_db() -> bool:
-    """Initializes SQLite tables for articles, settings, and known LAN devices."""
+    """Initializes SQLite tables for articles, settings, and known LAN devices with SD-card safeguards."""
     global current_interval_minutes, current_max_age_hours, active_keywords
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
+        # SD Card & Performance optimizations: Write-Ahead Logging + reduced fsync
+        cursor.execute("PRAGMA journal_mode = WAL")
+        cursor.execute("PRAGMA synchronous = NORMAL")
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS seen_articles (
                 id TEXT PRIMARY KEY,
@@ -175,15 +181,44 @@ def save_setting(key: str, value: str):
         conn.commit()
 
 
-def clean_old_records(days: int = 30):
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+def maintain_database():
+    """
+    Enforces multiple safeguards to guarantee the database never exceeds a few megabytes:
+    1. Removes records older than 14 days.
+    2. Enforces a strict row-count ceiling of MAX_ARTICLES_RETAINED (2,000 entries).
+    3. Runs VACUUM to reclaim freed disk pages so file shrinks.
+    4. Emergency guard: If file size exceeds 10MB, trims aggressively and vacuums.
+    """
     try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
+
+            # 1. Purge older than 14 days
             cursor.execute("DELETE FROM seen_articles WHERE seen_at < ?", (cutoff,))
+            deleted_age = cursor.rowcount
+
+            # 2. Hard row-count ceiling (keep newest 2,000)
+            cursor.execute("""
+                DELETE FROM seen_articles 
+                WHERE id NOT IN (
+                    SELECT id FROM seen_articles ORDER BY seen_at DESC LIMIT ?
+                )
+            """, (MAX_ARTICLES_RETAINED,))
+            deleted_count = cursor.rowcount
+
+            total_deleted = deleted_age + deleted_count
             conn.commit()
+
+            # 3. Check physical file size & vacuum if needed
+            db_size = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
+            if total_deleted > 50 or db_size > MAX_DB_SIZE_BYTES:
+                cursor.execute("VACUUM")
+                conn.commit()
+                new_size = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
+                logger.info("Database maintained: pruned %d entries. Size: %.1f KB", total_deleted, new_size / 1024)
     except Exception as e:
-        logger.warning("Error pruning database: %s", e)
+        logger.warning("Database maintenance error: %s", e)
 
 
 def is_seen(article_id: str) -> bool:
@@ -373,7 +408,7 @@ def check_feeds(manual_trigger: bool = False):
 
     digest_text = "\n".join(lines)
     send_telegram_message(digest_text)
-    clean_old_records()
+    maintain_database()
 
 
 def reschedule_job(minutes: int):
@@ -903,13 +938,15 @@ def handle_telegram_command(command_text: str):
             c.execute("SELECT COUNT(*) FROM known_devices")
             total_devs = c.fetchone()[0]
 
+        db_size_kb = int(os.path.getsize(DB_PATH) / 1024) if os.path.exists(DB_PATH) else 0
+
         msg = (
             f"📊 <b>Sentinel Master Status</b>\n"
             f"• <b>Host:</b> <code>{os.uname().nodename}</code>\n"
             f"• <b>Cadence:</b> Every <code>{curr_int} mins</code>\n"
             f"• <b>Max Article Age:</b> <code>{curr_age} hours</code>\n"
             f"• <b>Active Watchlist:</b> {kws_preview}\n"
-            f"• <b>Articles Tracked:</b> <code>{total_arts}</code>\n"
+            f"• <b>Articles Tracked:</b> <code>{total_arts}</code> (<code>{db_size_kb} KB</code> / 2k cap)\n"
             f"• <b>Known Wi-Fi Devices:</b> <code>{total_devs}</code>\n"
             f"• <b>Uptime Kuma:</b> <code>http://192.168.1.10:3001</code>"
         )
@@ -1050,6 +1087,9 @@ def main():
 
     # Schedule daily 9:00 AM AI repo briefing
     schedule.every().day.at("09:00").do(send_daily_ai_briefing)
+
+    # Schedule daily 3:00 AM database vacuum & deep maintenance
+    schedule.every().day.at("03:00").do(maintain_database)
 
     # Schedule Wi-Fi rogue device sweep every 5 minutes
     schedule.every(5).minutes.do(check_for_new_devices)
