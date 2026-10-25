@@ -1,0 +1,13 @@
+title: Argon Pi Homelab
+theme: dark
+color: slate
+layout:
+  Core Security & DNS:
+    style: row
+    columns: 4
+  Dev & AI Workspace:
+    style: row
+    columns: 3
+  System & Management:
+    style: row
+    columns: 3

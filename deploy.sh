@@ -19,8 +19,10 @@ echo "✅ SSH connection verified."
 # 2. Sync project files to Pi
 echo "📦 Syncing project files to $PI_HOST:$REMOTE_DIR..."
 ssh "$PI_HOST" "mkdir -p $REMOTE_DIR"
-rsync -avz --exclude '.git' --exclude '__pycache__' --exclude '*.db' --exclude 'data' --exclude 'caddy_data' --exclude 'cowrie-data' --exclude 'work' --exclude 'conf' --exclude 'config' --exclude 'Sync' --exclude 'trainingData' --exclude 'extraConfigs' --exclude 'customFiles' --exclude 'logs' \
+rsync -avz --exclude '.git' --exclude '__pycache__' --exclude '*.db' --exclude 'data' --exclude 'storage' --exclude 'caddy_data' --exclude 'cowrie-data' --exclude 'work' --exclude 'conf' --exclude 'config' --exclude 'Sync' --exclude 'trainingData' --exclude 'extraConfigs' --exclude 'customFiles' --exclude 'logs' \
     ./ "$PI_HOST:$REMOTE_DIR/"
+# Sync homepage config specifically so updates are tracked
+rsync -avz ./homepage/config/ "$PI_HOST:$REMOTE_DIR/homepage/config/"
 
 # 3. Check for .env file
 echo "🔑 Checking environment configuration..."
@@ -41,6 +43,9 @@ ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/vaultwarden/{data,caddy_data}"
 ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/stirling-pdf/{trainingData,extraConfigs,customFiles,logs}"
 ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/syncthing/{config,Sync}"
 ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/docker-registry/data"
+ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/homepage/config"
+ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/qdrant/storage"
+ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/crowdsec/{config,data}"
 
 # 5. Launch containers
 echo "🐳 Launching Docker containers on the Pi..."
@@ -53,6 +58,9 @@ ssh "$PI_HOST" "cd $REMOTE_DIR/vaultwarden && docker compose up -d"
 ssh "$PI_HOST" "cd $REMOTE_DIR/stirling-pdf && docker compose up -d"
 ssh "$PI_HOST" "cd $REMOTE_DIR/syncthing && docker compose up -d"
 ssh "$PI_HOST" "cd $REMOTE_DIR/docker-registry && docker compose up -d"
+ssh "$PI_HOST" "cd $REMOTE_DIR/homepage && docker compose up -d"
+ssh "$PI_HOST" "cd $REMOTE_DIR/qdrant && docker compose up -d"
+ssh "$PI_HOST" "cd $REMOTE_DIR/crowdsec && docker compose up -d"
 
 echo "=========================================================="
 echo "🎉 Deployment Complete! Live Containers on your Pi:"
