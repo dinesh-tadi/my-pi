@@ -61,6 +61,7 @@ fun ArgonApp(networkManager: NetworkManager) {
         ServiceViewerScreen(
             title = current.title,
             url = current.url,
+            activeHost = networkManager.getActiveHost(),
             onBack = { activeService = null },
             modifier = Modifier.fillMaxSize()
         )

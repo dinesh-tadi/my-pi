@@ -25,6 +25,13 @@ class NetworkManager {
     private val tailscaleHost = "100.123.87.122"
     private val dnsHost = "argon-host"
 
+    fun getActiveHost(): String {
+        return when (val state = _connectionState.value) {
+            is ConnectionState.Connected -> state.host
+            else -> lanHost
+        }
+    }
+
     suspend fun checkConnectivity() = withContext(Dispatchers.IO) {
         _connectionState.value = ConnectionState.Checking
 

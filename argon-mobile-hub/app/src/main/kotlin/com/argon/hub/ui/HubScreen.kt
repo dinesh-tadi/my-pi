@@ -149,6 +149,7 @@ fun HubScreen(
                 ServiceViewerScreen(
                     title = "Argon Dashboard",
                     url = "http://$activeHost/",
+                    activeHost = activeHost,
                     onBack = { selectedTab = 0 },
                     modifier = Modifier.fillMaxSize()
                 )
