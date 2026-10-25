@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.Warning
@@ -43,7 +44,9 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -57,6 +60,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,19 +72,24 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.argon.hub.data.ConnectionState
 import com.argon.hub.data.NetworkManager
+import com.argon.hub.data.OtaManager
+import com.argon.hub.data.OtaState
 import com.argon.hub.model.ServiceItem
 import com.argon.hub.model.ServiceRepository
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HubScreen(
     networkManager: NetworkManager,
+    otaManager: OtaManager,
     onOpenService: (title: String, url: String) -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val connectionState by networkManager.connectionState.collectAsStateWithLifecycle()
+    val otaState by otaManager.otaState.collectAsStateWithLifecycle()
     var selectedTab by remember { mutableIntStateOf(0) }
 
     val activeHost = when (val state = connectionState) {
@@ -127,6 +136,11 @@ fun HubScreen(
             // Offline Warning & One-Tap Tailscale Connect
             AnimatedVisibility(visible = connectionState is ConnectionState.Offline) {
                 TailscalePromptCard(onConnectTailscale = { networkManager.launchTailscale(context) })
+            }
+
+            // OTA Update Notification Banner
+            AnimatedVisibility(visible = otaState !is OtaState.Idle && otaState !is OtaState.Checking) {
+                OtaUpdateCard(otaState = otaState, otaManager = otaManager)
             }
 
             PrimaryTabRow(selectedTabIndex = selectedTab) {
@@ -381,4 +395,150 @@ fun getIconForService(name: String): ImageVector = when (name) {
     "layers" -> Icons.Default.Layers
     "send" -> Icons.AutoMirrored.Filled.Send
     else -> Icons.AutoMirrored.Filled.OpenInNew
+}
+
+@Composable
+fun OtaUpdateCard(otaState: OtaState, otaManager: OtaManager) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    when (otaState) {
+        is OtaState.Available -> {
+            ElevatedCard(
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.SystemUpdate,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "New Update: v${otaState.info.versionName} (Build ${otaState.info.versionCode})",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = otaState.info.releaseNotes,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(onClick = {
+                            scope.launch {
+                                otaManager.downloadAndInstall(context, otaState.downloadUrl)
+                            }
+                        }) {
+                            Text("Install Now")
+                        }
+                        OutlinedButton(onClick = {
+                            otaManager.openBrowserDownload(context, otaState.downloadUrl)
+                        }) {
+                            Text("Browser")
+                        }
+                        TextButton(onClick = { otaManager.dismissUpdate() }) {
+                            Text("Later")
+                        }
+                    }
+                }
+            }
+        }
+        is OtaState.Downloading -> {
+            ElevatedCard(
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Downloading Update: ${otaState.progressPercent}%",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { otaState.progressPercent / 100f },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+        is OtaState.ReadyToInstall -> {
+            ElevatedCard(
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Update Ready to Install",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Tap Install to apply the update.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Button(onClick = { otaManager.installApk(context, otaState.file) }) {
+                        Text("Install")
+                    }
+                }
+            }
+        }
+        is OtaState.Failed -> {
+            ElevatedCard(
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Update error: ${otaState.reason}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { otaManager.dismissUpdate() }) {
+                        Text("Dismiss")
+                    }
+                }
+            }
+        }
+        else -> Unit
+    }
 }

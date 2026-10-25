@@ -1,0 +1,15 @@
+services:
+  argon-ota:
+    image: caddy:alpine
+    container_name: argon-ota
+    restart: unless-stopped
+    ports:
+      - "5050:5050"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./dist:/dist:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"

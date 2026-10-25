@@ -1,0 +1,7 @@
+{
+  "versionCode": 1,
+  "versionName": "1.0",
+  "releaseDate": "2026-10-25T06:07:34Z",
+  "apkPath": "/argon-hub.apk",
+  "releaseNotes": "Added automated Over-The-Air updates & dynamic endpoint routing"
+}

@@ -16,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import com.argon.hub.data.NetworkManager
+import com.argon.hub.data.OtaManager
 import com.argon.hub.ui.HubScreen
 import com.argon.hub.ui.ServiceViewerScreen
 import com.argon.hub.ui.theme.ArgonHubTheme
@@ -25,6 +26,7 @@ data class ActiveService(val title: String, val url: String)
 
 class MainActivity : ComponentActivity() {
     private val networkManager = NetworkManager()
+    private val otaManager = OtaManager()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,7 +38,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    ArgonApp(networkManager)
+                    ArgonApp(networkManager, otaManager, getAppVersionCode())
                 }
             }
         }
@@ -44,15 +46,29 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Auto-refresh network status whenever user switches back to this app (e.g. from Tailscale)
+        // Auto-refresh network status and check for Pi OTA updates whenever returning to the app
         lifecycleScope.launch {
             networkManager.checkConnectivity()
+            otaManager.checkForUpdates(networkManager.getActiveHost(), getAppVersionCode())
+        }
+    }
+
+    private fun getAppVersionCode(): Long {
+        return try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                packageManager.getPackageInfo(packageName, 0).longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(packageName, 0).versionCode.toLong()
+            }
+        } catch (_: Exception) {
+            1L
         }
     }
 }
 
 @Composable
-fun ArgonApp(networkManager: NetworkManager) {
+fun ArgonApp(networkManager: NetworkManager, otaManager: OtaManager, currentVersionCode: Long) {
     val scope = rememberCoroutineScope()
     var activeService by remember { mutableStateOf<ActiveService?>(null) }
 
@@ -68,12 +84,14 @@ fun ArgonApp(networkManager: NetworkManager) {
     } else {
         HubScreen(
             networkManager = networkManager,
+            otaManager = otaManager,
             onOpenService = { title, url ->
                 activeService = ActiveService(title, url)
             },
             onRefresh = {
                 scope.launch {
                     networkManager.checkConnectivity()
+                    otaManager.checkForUpdates(networkManager.getActiveHost(), currentVersionCode)
                 }
             },
             modifier = Modifier.fillMaxSize()

@@ -1,0 +1,6 @@
+:5050 {
+    root * /dist
+    file_server browse
+    header Access-Control-Allow-Origin *
+    header Cache-Control "no-cache, no-store, must-revalidate"
+}
