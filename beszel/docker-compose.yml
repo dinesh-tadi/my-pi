@@ -3,8 +3,7 @@ services:
     image: henrygd/beszel:latest
     container_name: beszel
     restart: unless-stopped
-    ports:
-      - "8090:8090"
+    network_mode: host
     volumes:
       - ./beszel_data:/beszel_data
     logging:
@@ -22,7 +21,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       PORT: 45876
-      KEY: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHVqSiXWVRh7e3lsPTjFT3u1oRvC/agXL3S+njpXpY+C beszel-hub"
+      KEY: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM3Im7B1avLfKvBx696smOKmb5ZyWein9SJE2mM1jKaa"
     logging:
       driver: "json-file"
       options:
