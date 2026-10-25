@@ -140,6 +140,14 @@ def init_db() -> bool:
 
         # Clean up any Docker bridge entries from known_devices
         cursor.execute("DELETE FROM known_devices WHERE ip LIKE '172.%'")
+        
+        # Refresh vendor names for known devices
+        cursor.execute("SELECT mac, ip FROM known_devices WHERE vendor = 'Unknown Vendor'")
+        for row in cursor.fetchall():
+            mac_val, ip_val = row[0], row[1]
+            new_v = resolve_mac_vendor(mac_val, ip_val)
+            if new_v != "Unknown Vendor":
+                cursor.execute("UPDATE known_devices SET vendor = ? WHERE mac = ?", (new_v, mac_val))
         conn.commit()
 
         # Load saved interval
@@ -740,17 +748,41 @@ def format_device_time(ts_str: Optional[str]) -> str:
         return ts_str
 
 
-def resolve_mac_vendor(mac: str) -> str:
-    prefix = mac.lower()[:8]
+def is_randomized_mac(mac: str) -> bool:
+    """Checks IEEE 802 Locally Administered / Private MAC address bit (used by iOS, macOS, Android)."""
+    try:
+        first_byte = int(mac.split(":")[0], 16)
+        return (first_byte & 0x02) != 0
+    except Exception:
+        return False
+
+
+def resolve_mac_vendor(mac: str, ip: str = "") -> str:
+    mac_clean = mac.lower().strip()
+    prefix = mac_clean[:8]
+
+    if ip == "192.168.1.1":
+        return "Gateway / Router (Nokia)"
+
     if prefix in mac_vendor_cache:
         return mac_vendor_cache[prefix]
 
+    # Check for Apple / Android Private Randomized MAC
+    if is_randomized_mac(mac_clean):
+        label = "Private MAC (Apple/Mobile)"
+        mac_vendor_cache[prefix] = label
+        return label
+
+    # Query public MAC OUI database
     try:
-        resp = requests.get(f"https://api.macvendors.com/{mac}", timeout=2)
+        clean_hex = mac_clean.replace(":", "")[:6]
+        resp = requests.get(f"https://api.maclookup.app/v2/macs/{clean_hex}", timeout=3)
         if resp.status_code == 200:
-            vendor = resp.text.strip()[:20]
-            mac_vendor_cache[prefix] = vendor
-            return vendor
+            data = resp.json()
+            if data.get("found") and data.get("company"):
+                comp = data["company"].split(",")[0].replace("Co.", "").replace("Ltd.", "").strip()[:25]
+                mac_vendor_cache[prefix] = comp
+                return comp
     except Exception:
         pass
 
@@ -783,7 +815,7 @@ def scan_wifi_devices() -> List[Dict[str, str]]:
                             mac = parts[3].lower()
                             flags = parts[2]
                             if mac != "00:00:00:00:00:00" and flags != "0x0" and is_lan_ip(ip):
-                                vendor = resolve_mac_vendor(mac)
+                                vendor = resolve_mac_vendor(mac, ip)
                                 devices.append({"ip": ip, "mac": mac, "vendor": vendor})
                 break
             except Exception as e:
