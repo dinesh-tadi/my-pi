@@ -1,25 +1,25 @@
 - Core Security & DNS:
     - AdGuard Home:
         icon: adguard-home.png
-        href: http://192.168.1.10:8080/
+        href: http://argon-host:8080/
         description: Network-wide ad & tracker blocker
         container: adguard-home
         server: my-docker
     - Vaultwarden:
         icon: bitwarden.png
-        href: https://192.168.1.10:8443/
+        href: https://argon-host:8443/
         description: Encrypted password & API secrets vault
         container: vaultwarden
         server: my-docker
     - Cowrie Honeypot:
         icon: terminal.png
-        href: http://192.168.1.10:3001/
+        href: http://argon-host:3001/
         description: SSH & Telnet intrusion deception
         container: cowrie-honeypot
         server: my-docker
     - CrowdSec:
         icon: crowdsec.png
-        href: http://192.168.1.10:8081/
+        href: http://argon-host:8081/
         description: Collaborative threat defense & firewall
         container: crowdsec
         server: my-docker
@@ -27,19 +27,19 @@
 - Dev & AI Workspace:
     - Qdrant Vector DB:
         icon: qdrant.png
-        href: http://192.168.1.10:6333/dashboard
+        href: http://argon-host:6333/dashboard
         description: Vector search engine for AI embeddings & RAG
         container: qdrant
         server: my-docker
     - Disposable Browser:
         icon: chromium.png
-        href: https://192.168.1.10:3003/
+        href: https://argon-host:3003/
         description: Selkies WebRTC sandbox cleanroom
         container: chromium-sandbox
         server: my-docker
     - Stirling-PDF:
         icon: stirling-pdf.png
-        href: http://192.168.1.10:8086/
+        href: http://argon-host:8086/
         description: In-browser private document studio & OCR
         container: stirling-pdf
         server: my-docker
@@ -47,19 +47,19 @@
 - System & Management:
     - Uptime Kuma:
         icon: uptime-kuma.png
-        href: http://192.168.1.10:3001/
+        href: http://argon-host:3001/
         description: Real-time service uptime & ping monitors
         container: uptime-kuma
         server: my-docker
     - Syncthing:
         icon: syncthing.png
-        href: http://192.168.1.10:8384/
+        href: http://argon-host:8384/
         description: Encrypted P2P file & Obsidian sync
         container: syncthing
         server: my-docker
     - Docker Registry:
         icon: docker.png
-        href: http://192.168.1.10:5001/
+        href: http://argon-host:5001/
         description: Private container catalog & image registry
         container: local-registry-ui
         server: my-docker
