@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 24/7 AI Sentinel & Ops Center for Raspberry Pi
-- News & Stock Watcher (strict whole-word matching, batched digests)
+- News & Stock Watcher (strict whole-word matching, publication freshness filter, batched digests)
 - Interactive Telegram Command Center
 - /pi: Real-time CPU temp, RAM, Disk, Docker container telemetry
 - /scan <url>: Headless URL redirection & security inspector
@@ -9,6 +9,7 @@
 - /trending: Trending AI/ML open-source GitHub repositories (+ 9:00 AM daily digest)
 - /devices: Local Wi-Fi network scanner & proactive rogue device alerts
 - /ping: Network latency diagnostics
+- /age <hours>: Adjust maximum article age filter
 """
 
 import os
@@ -23,7 +24,8 @@ import sqlite3
 import hashlib
 import threading
 import shutil
-from datetime import datetime, timedelta
+import calendar
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from typing import Optional, List, Dict, Any, Tuple
 
@@ -52,6 +54,7 @@ DEFAULT_KEYWORDS = [
     "OpenAI", "Anthropic", "zero-day", "ransomware", "earnings", "acquisition"
 ]
 DEFAULT_INTERVAL = int(os.getenv("POLL_INTERVAL_MINUTES", "15"))
+DEFAULT_MAX_AGE_HOURS = int(os.getenv("MAX_ARTICLE_AGE_HOURS", "24"))
 
 # Database path (persisted in ./data)
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -61,6 +64,7 @@ DB_PATH = os.path.join(DATA_DIR, "seen_articles.db")
 # Threading lock for dynamic settings
 state_lock = threading.Lock()
 current_interval_minutes = DEFAULT_INTERVAL
+current_max_age_hours = DEFAULT_MAX_AGE_HOURS
 active_keywords: List[str] = list(DEFAULT_KEYWORDS)
 
 # In-memory cache for MAC vendor lookups
@@ -97,7 +101,7 @@ FEEDS = [
 
 def init_db() -> bool:
     """Initializes SQLite tables for articles, settings, and known LAN devices."""
-    global current_interval_minutes, active_keywords
+    global current_interval_minutes, current_max_age_hours, active_keywords
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -139,6 +143,17 @@ def init_db() -> bool:
         else:
             cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('interval_minutes', ?)", (str(DEFAULT_INTERVAL),))
 
+        # Load saved max age hours
+        cursor.execute("SELECT value FROM settings WHERE key = 'max_age_hours'")
+        row = cursor.fetchone()
+        if row:
+            try:
+                current_max_age_hours = int(row[0])
+            except ValueError:
+                pass
+        else:
+            cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('max_age_hours', ?)", (str(DEFAULT_MAX_AGE_HOURS),))
+
         # Load saved keywords
         cursor.execute("SELECT value FROM settings WHERE key = 'keywords'")
         row = cursor.fetchone()
@@ -161,7 +176,7 @@ def save_setting(key: str, value: str):
 
 
 def clean_old_records(days: int = 30):
-    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     try:
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
@@ -191,6 +206,32 @@ def mark_seen(article_id: str, title: str, link: str, source: str):
 def generate_article_id(title: str, link: str) -> str:
     seed = (link or title).strip()
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+
+
+def get_article_datetime(entry) -> Optional[datetime]:
+    """Extracts UTC publication timestamp from feed entry."""
+    parsed = entry.get("published_parsed") or entry.get("updated_parsed")
+    if parsed:
+        try:
+            return datetime.fromtimestamp(calendar.timegm(parsed), timezone.utc)
+        except Exception:
+            pass
+    return None
+
+
+def format_relative_time(dt: Optional[datetime]) -> str:
+    if not dt:
+        return "Recent"
+    now = datetime.now(timezone.utc)
+    diff_secs = (now - dt).total_seconds()
+    if diff_secs < 60:
+        return "Just now"
+    elif diff_secs < 3600:
+        return f"{int(diff_secs / 60)}m ago"
+    elif diff_secs < 86400:
+        return f"{int(diff_secs / 3600)}h ago"
+    else:
+        return f"{int(diff_secs / 86400)}d ago"
 
 
 def match_keywords(title: str, summary: str) -> List[str]:
@@ -251,12 +292,16 @@ def seed_database_quietly():
 
 
 # ==========================================
-# Core Feed Poller
+# Core Feed Poller (With Publication Date Filter)
 # ==========================================
 
 def check_feeds(manual_trigger: bool = False):
-    logger.info("Checking RSS feeds (manual=%s)...", manual_trigger)
+    logger.info("Checking RSS feeds (manual=%s, max_age=%dh)...", manual_trigger, current_max_age_hours)
     matched_articles = []
+    now_utc = datetime.now(timezone.utc)
+
+    with state_lock:
+        max_age = current_max_age_hours
 
     for feed_info in FEEDS:
         feed_name = feed_info["name"]
@@ -280,35 +325,46 @@ def check_feeds(manual_trigger: bool = False):
             if is_seen(article_id):
                 continue
 
+            # Publication Date Freshness Filter
+            article_dt = get_article_datetime(entry)
+            if article_dt:
+                age_hours = (now_utc - article_dt).total_seconds() / 3600.0
+                if age_hours > max_age:
+                    # Article is older than max freshness cutoff: mark seen and skip!
+                    mark_seen(article_id, title, link, feed_name)
+                    continue
+
             matched_kws = match_keywords(title, summary)
             if matched_kws:
+                rel_time = format_relative_time(article_dt)
                 matched_articles.append({
                     "title": title,
                     "link": link,
                     "source": feed_name,
+                    "rel_time": rel_time,
                     "tags": [f"#{kw.upper()}" for kw in matched_kws[:3]]
                 })
 
             mark_seen(article_id, title, link, feed_name)
 
     if not matched_articles:
-        logger.info("Feed check completed. No new matches.")
+        logger.info("Feed check completed. No new matches within %dh cutoff.", max_age)
         if manual_trigger:
-            send_telegram_message("✅ <b>Manual Check Complete:</b> No new articles matching your watchlist.")
+            send_telegram_message(f"✅ <b>Manual Check Complete:</b> No new articles published within the last {max_age} hours.")
         return
 
     total_matched = len(matched_articles)
     articles_to_send = matched_articles[:3]
 
     lines = [
-        f"📊 <b>Market & Tech Sentinel</b> (<code>{len(articles_to_send)} update{'s' if len(articles_to_send) > 1 else ''}</code>)",
+        f"📊 <b>Market & Tech Sentinel</b> (<code>{len(articles_to_send)} new update{'s' if len(articles_to_send) > 1 else ''}</code>)",
         ""
     ]
 
     for item in articles_to_send:
         tags_str = " ".join(item["tags"])
         lines.append(f"• <b>{item['title']}</b>")
-        lines.append(f"  <i>{item['source']}</i> | <code>{tags_str}</code>")
+        lines.append(f"  <i>{item['source']}</i> • <code>{item['rel_time']}</code> | <code>{tags_str}</code>")
         lines.append(f"  🔗 <a href='{item['link']}'>Read Article</a>")
         lines.append("")
 
@@ -335,7 +391,6 @@ def reschedule_job(minutes: int):
 # ==========================================
 
 def get_docker_containers() -> List[Dict[str, str]]:
-    """Queries Docker Unix socket to list running containers without external dependencies."""
     containers = []
     socket_path = "/var/run/docker.sock"
     if not os.path.exists(socket_path):
@@ -355,7 +410,6 @@ def get_docker_containers() -> List[Dict[str, str]]:
             response += chunk
         s.close()
 
-        # Parse HTTP response body
         parts = response.split(b"\r\n\r\n", 1)
         if len(parts) == 2:
             data = json.loads(parts[1].decode("utf-8", errors="ignore"))
@@ -370,8 +424,6 @@ def get_docker_containers() -> List[Dict[str, str]]:
 
 
 def get_system_telemetry() -> str:
-    """Reads hardware metrics (CPU Temp, RAM, Disk, Load, Uptime, Docker) from /proc and /sys."""
-    # 1. CPU Temperature
     cpu_temp = "N/A"
     temp_paths = [
         "/host/sys/class/thermal/thermal_zone0/temp",
@@ -386,7 +438,6 @@ def get_system_telemetry() -> str:
             except Exception:
                 pass
 
-    # 2. CPU Load Average
     load_1, load_5, load_15 = "N/A", "N/A", "N/A"
     load_paths = ["/host/proc/loadavg", "/proc/loadavg"]
     for p in load_paths:
@@ -399,7 +450,6 @@ def get_system_telemetry() -> str:
             except Exception:
                 pass
 
-    # 3. RAM Memory
     mem_used_mb, mem_total_mb, mem_pct = 0, 0, 0
     mem_paths = ["/host/proc/meminfo", "/proc/meminfo"]
     for p in mem_paths:
@@ -421,7 +471,6 @@ def get_system_telemetry() -> str:
             except Exception:
                 pass
 
-    # 4. Disk Usage
     try:
         total, used, free = shutil.disk_usage("/")
         disk_total_gb = f"{total / (1024**3):.1f}GB"
@@ -430,7 +479,6 @@ def get_system_telemetry() -> str:
     except Exception:
         disk_total_gb, disk_used_gb, disk_pct = "N/A", "N/A", 0
 
-    # 5. Uptime
     uptime_str = "N/A"
     uptime_paths = ["/host/proc/uptime", "/proc/uptime"]
     for p in uptime_paths:
@@ -443,7 +491,6 @@ def get_system_telemetry() -> str:
             except Exception:
                 pass
 
-    # 6. Tailscale & LAN IP
     tailscale_ip = "Offline"
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -453,7 +500,6 @@ def get_system_telemetry() -> str:
     except Exception:
         pass
 
-    # 7. Containers
     containers = get_docker_containers()
     container_lines = []
     for c in containers:
@@ -480,7 +526,6 @@ def get_system_telemetry() -> str:
 # ==========================================
 
 def inspect_url_security(target_url: str) -> str:
-    """Headlessly analyzes redirects, DNS, SSL, and malicious file types."""
     if not target_url.startswith(("http://", "https://")):
         target_url = "https://" + target_url
 
@@ -489,13 +534,11 @@ def inspect_url_security(target_url: str) -> str:
     if not domain:
         return "⚠️ Invalid URL provided. Example: <code>/scan https://bit.ly/xyz</code>"
 
-    # DNS check
     try:
         ip = socket.gethostbyname(domain)
     except Exception as e:
         return f"❌ <b>DNS Resolution Failed:</b> <code>{e}</code>"
 
-    # Request inspection with redirection tracking
     try:
         resp = requests.get(
             target_url,
@@ -513,7 +556,6 @@ def inspect_url_security(target_url: str) -> str:
         content_length = resp.headers.get("Content-Length")
         size_str = f"{int(content_length) / 1024:.1f} KB" if content_length else "Stream / Chunked"
 
-        # Threat heuristics
         threat_flags = []
         dangerous_exts = (".exe", ".sh", ".apk", ".dmg", ".bat", ".vbs", ".zip", ".iso")
         if any(resp.url.lower().endswith(ext) for ext in dangerous_exts):
@@ -522,10 +564,8 @@ def inspect_url_security(target_url: str) -> str:
         if not resp.url.startswith("https://"):
             threat_flags.append("⚠️ <b>Unencrypted HTTP connection</b>")
 
-        # Security headers
         hsts = "Yes" if "Strict-Transport-Security" in resp.headers else "No"
         xframe = resp.headers.get("X-Frame-Options", "None")
-
         threat_summary = "\n".join(threat_flags) if threat_flags else "✅ No obvious payload red-flags detected."
 
         msg = (
@@ -549,11 +589,9 @@ def inspect_url_security(target_url: str) -> str:
 # ==========================================
 
 def lookup_cve(package_name: str) -> str:
-    """Queries OSV.dev across PyPI, npm, and Go for known vulnerabilities."""
     pkg = package_name.strip()
     found_vulns = []
 
-    # Check common ecosystems
     for eco in ("PyPI", "npm", "Go", "crates.io"):
         try:
             url = "https://api.osv.dev/v1/query"
@@ -598,7 +636,6 @@ def lookup_cve(package_name: str) -> str:
 # ==========================================
 
 def get_trending_ai_repos() -> str:
-    """Fetches high-velocity open-source AI and LLM repositories on GitHub."""
     try:
         url = "https://api.github.com/search/repositories?q=topic:llm+stars:>300&sort=updated&order=desc&per_page=4"
         resp = requests.get(url, timeout=6, headers={"User-Agent": "SentinelBot/1.0"})
@@ -640,7 +677,6 @@ def resolve_mac_vendor(mac: str) -> str:
     if prefix in mac_vendor_cache:
         return mac_vendor_cache[prefix]
 
-    # Try 3-byte prefix API lookup
     try:
         resp = requests.get(f"https://api.macvendors.com/{mac}", timeout=2)
         if resp.status_code == 200:
@@ -654,7 +690,6 @@ def resolve_mac_vendor(mac: str) -> str:
 
 
 def scan_wifi_devices() -> List[Dict[str, str]]:
-    """Inspects /proc/net/arp table to track active devices on the home LAN."""
     devices = []
     arp_paths = ["/host/proc/net/arp", "/proc/net/arp"]
 
@@ -662,14 +697,13 @@ def scan_wifi_devices() -> List[Dict[str, str]]:
         if os.path.exists(p):
             try:
                 with open(p) as f:
-                    lines = f.readlines()[1:]  # skip header
+                    lines = f.readlines()[1:]
                     for line in lines:
                         parts = line.split()
                         if len(parts) >= 6:
                             ip = parts[0]
                             mac = parts[3].lower()
                             flags = parts[2]
-                            # Filter active/valid MACs
                             if mac != "00:00:00:00:00:00" and flags != "0x0":
                                 vendor = resolve_mac_vendor(mac)
                                 devices.append({"ip": ip, "mac": mac, "vendor": vendor})
@@ -681,7 +715,6 @@ def scan_wifi_devices() -> List[Dict[str, str]]:
 
 
 def check_for_new_devices():
-    """Background watchdog alerting on rogue or unfamiliar MAC addresses."""
     active_devices = scan_wifi_devices()
     if not active_devices:
         return
@@ -697,7 +730,6 @@ def check_for_new_devices():
             row = cursor.fetchone()
 
             if not row:
-                # Brand new device detected!
                 cursor.execute(
                     "INSERT INTO known_devices (mac, ip, vendor, first_seen, last_seen) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                     (mac, ip, vendor)
@@ -722,7 +754,6 @@ def check_for_new_devices():
 # ==========================================
 
 def ping_network_latency() -> str:
-    """Measures TCP handshake latency to major cloud DNS providers."""
     targets = [("Cloudflare DNS", "1.1.1.1", 53), ("Google DNS", "8.8.8.8", 53)]
     results = []
 
@@ -754,7 +785,7 @@ def ping_network_latency() -> str:
 # ==========================================
 
 def handle_telegram_command(command_text: str):
-    global current_interval_minutes, active_keywords
+    global current_interval_minutes, current_max_age_hours, active_keywords
     parts = command_text.strip().split()
     if not parts:
         return
@@ -824,18 +855,46 @@ def handle_telegram_command(command_text: str):
         except ValueError:
             send_telegram_message("⚠️ Invalid format. Example: <code>/interval 30</code>")
 
-    # 8. /check
+    # 8. /age <hours> or /freshness <hours>
+    elif cmd in ("/age", "/freshness"):
+        if not args:
+            send_telegram_message(
+                f"🕒 <b>Article Freshness Cutoff:</b> <code>{current_max_age_hours} hours</code>\n\n"
+                f"Articles older than {current_max_age_hours}h are automatically ignored.\n"
+                f"To change cutoff: <code>/age &lt;hours&gt;</code> (e.g. <code>/age 12</code> or <code>/age 24</code>)"
+            )
+            return
+
+        try:
+            hours = int(args[0])
+            if hours < 1 or hours > 168:
+                send_telegram_message("⚠️ Please specify an age cutoff between <b>1</b> and <b>168</b> hours (7 days).")
+                return
+
+            with state_lock:
+                current_max_age_hours = hours
+                save_setting("max_age_hours", str(hours))
+
+            send_telegram_message(
+                f"🕒 <b>Freshness Cutoff Updated!</b>\n"
+                f"Sentinel will strictly reject any articles published older than <b>{hours} hours</b>."
+            )
+        except ValueError:
+            send_telegram_message("⚠️ Invalid format. Example: <code>/age 24</code>")
+
+    # 9. /check
     elif cmd in ("/check", "/poll"):
         send_telegram_message("🔄 <i>Running immediate RSS check...</i>")
         check_feeds(manual_trigger=True)
 
-    # 9. /status
+    # 10. /status
     elif cmd in ("/status", "/info"):
         with state_lock:
             kws_preview = ", ".join(active_keywords[:8])
             if len(active_keywords) > 8:
                 kws_preview += f" (+{len(active_keywords) - 8} more)"
             curr_int = current_interval_minutes
+            curr_age = current_max_age_hours
 
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
@@ -848,6 +907,7 @@ def handle_telegram_command(command_text: str):
             f"📊 <b>Sentinel Master Status</b>\n"
             f"• <b>Host:</b> <code>{os.uname().nodename}</code>\n"
             f"• <b>Cadence:</b> Every <code>{curr_int} mins</code>\n"
+            f"• <b>Max Article Age:</b> <code>{curr_age} hours</code>\n"
             f"• <b>Active Watchlist:</b> {kws_preview}\n"
             f"• <b>Articles Tracked:</b> <code>{total_arts}</code>\n"
             f"• <b>Known Wi-Fi Devices:</b> <code>{total_devs}</code>\n"
@@ -855,7 +915,7 @@ def handle_telegram_command(command_text: str):
         )
         send_telegram_message(msg)
 
-    # 10. /list
+    # 11. /list
     elif cmd in ("/list", "/keywords"):
         with state_lock:
             kws = list(active_keywords)
@@ -866,7 +926,7 @@ def handle_telegram_command(command_text: str):
             f"Remove ticker: <code>/remove TSLA</code>"
         )
 
-    # 11. /add <word>
+    # 12. /add <word>
     elif cmd == "/add":
         if not args:
             send_telegram_message("⚠️ Usage: <code>/add &lt;word&gt;</code>")
@@ -881,7 +941,7 @@ def handle_telegram_command(command_text: str):
                 msg = f"ℹ️ <b>{new_word}</b> is already in your watchlist."
         send_telegram_message(msg)
 
-    # 12. /remove <word>
+    # 13. /remove <word>
     elif cmd in ("/remove", "/del"):
         if not args:
             send_telegram_message("⚠️ Usage: <code>/remove &lt;word&gt;</code>")
@@ -897,7 +957,7 @@ def handle_telegram_command(command_text: str):
                 msg = f"ℹ️ <b>{del_word}</b> was not found in your watchlist."
         send_telegram_message(msg)
 
-    # 13. /help
+    # 14. /help
     elif cmd in ("/help", "/start"):
         help_text = (
             f"🛡️ <b>Sentinel Ops Command Menu</b>\n\n"
@@ -911,6 +971,7 @@ def handle_telegram_command(command_text: str):
             f"• <code>/trending</code> - Top trending open-source AI repos\n\n"
             f"<b>Feed & Intelligence Control:</b>\n"
             f"• <code>/interval &lt;mins&gt;</code> - Change check frequency\n"
+            f"• <code>/age &lt;hours&gt;</code> - Set max article age cutoff (e.g. /age 24)\n"
             f"• <code>/check</code> - Run an instant feed check now\n"
             f"• <code>/status</code> - Complete bot status overview\n"
             f"• <code>/list</code> - Show active watchlist tickers\n"
@@ -963,10 +1024,9 @@ def send_startup_ping():
         f"⚡ <b>Sentinel Command Center Online</b>\n"
         f"• Host: <code>{os.uname().nodename}</code>\n"
         f"• Cadence: <code>Every {current_interval_minutes}m</code>\n"
+        f"• Freshness Cutoff: <code>Last {current_max_age_hours}h only</code>\n"
         f"• Tailscale Exit Node: <code>Active</code>\n"
-        f"• Uptime Kuma: <code>http://192.168.1.10:3001</code>\n\n"
-        f"Try commands:\n"
-        f"<code>/pi</code> | <code>/devices</code> | <code>/scan https://bit.ly/...</code> | <code>/cve fastapi</code>"
+        f"• Uptime Kuma: <code>http://192.168.1.10:3001</code>"
     )
     send_telegram_message(msg)
 
