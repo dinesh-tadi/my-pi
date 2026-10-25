@@ -1,7 +1,7 @@
 {
-  "versionCode": 2,
-  "versionName": "1.1",
-  "releaseDate": "2026-10-25T06:11:14Z",
+  "versionCode": 3,
+  "versionName": "1.2",
+  "releaseDate": "2026-10-25T06:16:01Z",
   "apkPath": "/argon-hub.apk",
-  "releaseNotes": "Experimental OTA Update: Live in-app update test 🎉"
+  "releaseNotes": "Added app version badge below header"
 }

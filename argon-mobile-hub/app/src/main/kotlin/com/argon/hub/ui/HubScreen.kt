@@ -101,16 +101,32 @@ fun HubScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    Column {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Argon Hub",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            ConnectionStatusBadge(connectionState)
+                        }
+                        val installedVersion = remember(context) {
+                            try {
+                                val pkgInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                                val vName = pkgInfo.versionName ?: "1.2"
+                                if (vName.startsWith("v")) vName else "v$vName"
+                            } catch (_: Exception) {
+                                "v1.2"
+                            }
+                        }
                         Text(
-                            text = "Argon Hub",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
+                            text = installedVersion,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        ConnectionStatusBadge(connectionState)
                     }
                 },
                 actions = {
