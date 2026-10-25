@@ -1,0 +1,30 @@
+services:
+  registry:
+    image: registry:2
+    container_name: local-registry
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+      REGISTRY_HTTP_HEADERS_Access-Control-Allow-Origin: '[*]'
+      REGISTRY_HTTP_HEADERS_Access-Control-Allow-Methods: '[HEAD,GET,OPTIONS,DELETE]'
+      REGISTRY_HTTP_HEADERS_Access-Control-Allow-Credentials: '[true]'
+      REGISTRY_HTTP_HEADERS_Access-Control-Allow-Headers: '[Authorization,Accept,Cache-Control]'
+      REGISTRY_HTTP_HEADERS_Access-Control-Expose-Headers: '[Docker-Content-Digest]'
+    volumes:
+      - ./data:/var/lib/registry
+
+  registry-ui:
+    image: joxit/docker-registry-ui:main
+    container_name: local-registry-ui
+    restart: unless-stopped
+    ports:
+      - "5001:80"
+    environment:
+      - SINGLE_REGISTRY=true
+      - REGISTRY_TITLE=Argon Private Registry
+      - REGISTRY_URL=http://192.168.1.10:5000
+      - DELETE_IMAGES=true
+    depends_on:
+      - registry
