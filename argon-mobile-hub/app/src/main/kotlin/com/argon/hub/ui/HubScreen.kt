@@ -425,6 +425,7 @@ fun getIconForService(name: String): ImageVector = when (name) {
     "build" -> Icons.Default.Build
     "thermostat" -> Icons.Default.Thermostat
     "update" -> Icons.Default.Update
+    "share" -> Icons.AutoMirrored.Filled.Send
     else -> Icons.AutoMirrored.Filled.OpenInNew
 }
 

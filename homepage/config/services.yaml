@@ -48,6 +48,12 @@
         description: Swiss army knife of 80+ developer utilities
         container: it-tools
         server: my-docker
+    - PairDrop:
+        icon: pairdrop.png
+        href: http://argon-host:8088/
+        description: Local peer-to-peer file transfer & AirDrop alternative
+        container: pairdrop
+        server: my-docker
 
 - System & Management:
     - Uptime Kuma:

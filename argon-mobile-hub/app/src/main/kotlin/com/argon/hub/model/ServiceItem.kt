@@ -94,6 +94,14 @@ object ServiceRepository {
             port = 8087,
             iconName = "build"
         ),
+        ServiceItem(
+            id = "pairdrop",
+            title = "PairDrop",
+            description = "Local peer-to-peer file transfer & AirDrop alternative",
+            category = "AI & Dev Workspace",
+            port = 8088,
+            iconName = "share"
+        ),
 
         // System & Management
         ServiceItem(
