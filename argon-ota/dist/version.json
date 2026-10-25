@@ -1,7 +1,7 @@
 {
-  "versionCode": 1,
-  "versionName": "1.0",
-  "releaseDate": "2026-10-25T06:07:34Z",
+  "versionCode": 2,
+  "versionName": "1.1",
+  "releaseDate": "2026-10-25T06:11:14Z",
   "apkPath": "/argon-hub.apk",
-  "releaseNotes": "Added automated Over-The-Air updates & dynamic endpoint routing"
+  "releaseNotes": "Experimental OTA Update: Live in-app update test 🎉"
 }
