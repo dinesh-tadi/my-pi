@@ -13,13 +13,12 @@
         server: my-docker
     - Cowrie Honeypot:
         icon: terminal.png
-        href: http://argon-host:3001/
-        description: SSH & Telnet intrusion deception
+        description: SSH & Telnet intrusion deception (Port 2222)
         container: cowrie-honeypot
         server: my-docker
     - CrowdSec:
         icon: crowdsec.png
-        href: http://argon-host:8081/
+        href: https://app.crowdsec.net/security-engines
         description: Collaborative threat defense & firewall
         container: crowdsec
         server: my-docker

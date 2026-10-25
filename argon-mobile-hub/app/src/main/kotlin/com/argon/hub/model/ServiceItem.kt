@@ -9,7 +9,8 @@ data class ServiceItem(
     val isHttps: Boolean = false,
     val path: String = "/",
     val iconName: String = "dns",
-    val externalUrl: String? = null
+    val externalUrl: String? = null,
+    val isWebUi: Boolean = true
 ) {
     fun getUrl(activeHost: String): String {
         if (externalUrl != null) return externalUrl
@@ -42,18 +43,20 @@ object ServiceRepository {
         ServiceItem(
             id = "honeypot",
             title = "Cowrie Honeypot",
-            description = "SSH/Telnet deception & intrusion logger",
+            description = "SSH/Telnet decoy sensor (Ports 2222/2223) • Telegram Bot alerts",
             category = "Core Security & DNS",
-            port = 3001,
-            iconName = "terminal"
+            port = 2222,
+            iconName = "terminal",
+            isWebUi = false
         ),
         ServiceItem(
             id = "crowdsec",
             title = "CrowdSec Defense",
-            description = "Collaborative firewall & threat bouncer",
+            description = "Collaborative firewall & threat bouncer (LAPI: 8081)",
             category = "Core Security & DNS",
             port = 8081,
-            iconName = "shield"
+            iconName = "shield",
+            externalUrl = "https://app.crowdsec.net"
         ),
 
         // AI & Dev Workspace

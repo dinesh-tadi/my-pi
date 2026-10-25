@@ -20,21 +20,22 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.DataObject
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
@@ -48,11 +49,13 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -238,7 +241,28 @@ fun NativeServicesList(
     onOpenService: (title: String, url: String) -> Unit
 ) {
     val context = LocalContext.current
+    var infoService by remember { mutableStateOf<ServiceItem?>(null) }
     val categories = services.groupBy { it.category }
+
+    if (infoService != null) {
+        val s = infoService!!
+        AlertDialog(
+            onDismissRequest = { infoService = null },
+            title = { Text(s.title) },
+            text = {
+                Text(
+                    "Cowrie is an active SSH & Telnet decoy honeypot running on ports 2222 and 2223.\n\n" +
+                    "It silently captures attacker intrusion sessions in the background and delivers real-time threat intelligence directly to your Telegram bot.\n\n" +
+                    "Because it is a deception sensor, it runs purely in the background without an HTTP web dashboard."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { infoService = null }) {
+                    Text("Understood")
+                }
+            }
+        )
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -261,7 +285,9 @@ fun NativeServicesList(
                     service = service,
                     fullUrl = fullUrl,
                     onClick = {
-                        if (service.externalUrl != null) {
+                        if (!service.isWebUi) {
+                            infoService = service
+                        } else if (service.externalUrl != null) {
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(service.externalUrl)).apply {
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             }
@@ -353,6 +379,6 @@ fun getIconForService(name: String): ImageVector = when (name) {
     "speed" -> Icons.Default.Speed
     "sync" -> Icons.Default.Sync
     "layers" -> Icons.Default.Layers
-    "send" -> Icons.Default.Send
-    else -> Icons.Default.OpenInNew
+    "send" -> Icons.AutoMirrored.Filled.Send
+    else -> Icons.AutoMirrored.Filled.OpenInNew
 }
