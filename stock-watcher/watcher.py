@@ -27,6 +27,7 @@ import shutil
 import calendar
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
+from html.parser import HTMLParser
 from typing import Optional, List, Dict, Any, Tuple
 
 import requests
@@ -892,6 +893,124 @@ def ping_network_latency() -> str:
 
 
 # ==========================================
+# Feature 7: /web <url> & /ask <prompt> (Cost-Free)
+# ==========================================
+
+class ArticleExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.text = []
+        self.skip = False
+        self.title = ""
+        self.in_title = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style", "nav", "header", "footer", "aside"):
+            self.skip = True
+        elif tag == "title":
+            self.in_title = True
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style", "nav", "header", "footer", "aside"):
+            self.skip = False
+        elif tag == "title":
+            self.in_title = False
+
+    def handle_data(self, data):
+        if self.in_title:
+            self.title += data.strip()
+        elif not self.skip:
+            d = data.strip()
+            if len(d) > 25:
+                self.text.append(d)
+
+
+def extract_web_content(target_url: str) -> str:
+    if not target_url.startswith(("http://", "https://")):
+        target_url = "https://" + target_url
+
+    parsed = urlparse(target_url)
+    if not parsed.hostname:
+        return "⚠️ Invalid URL provided. Example: <code>/web https://techcrunch.com/...</code>"
+
+    try:
+        resp = requests.get(target_url, timeout=10, headers={"User-Agent": "Mozilla/5.0 SentinelReader/1.0"})
+        if resp.status_code != 200:
+            return f"❌ Failed to fetch page (HTTP {resp.status_code})"
+
+        parser = ArticleExtractor()
+        parser.feed(resp.text)
+        title = parser.title or parsed.hostname
+        full_text = " ".join(parser.text)
+        words = full_text.split()
+        word_count = len(words)
+        read_time = max(1, int(word_count / 200))
+
+        # Optional Gemini AI Summary
+        if GEMINI_API_KEY and full_text:
+            prompt = (
+                "You are an executive research assistant.\n"
+                f"Webpage Title: {title}\n"
+                f"Content: {full_text[:3500]}\n\n"
+                "Provide an executive 3-bullet summary focusing on key takeaways, technical/financial facts, and relevance:"
+            )
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 250}
+            }
+            try:
+                ai_resp = requests.post(url, json=payload, timeout=12)
+                if ai_resp.status_code == 200:
+                    ai_text = ai_resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    return (
+                        f"📰 <b>Executive Web Summary</b>\n\n"
+                        f"<b>{title}</b>\n"
+                        f"<i>Source: {parsed.hostname} • ~{read_time} min read ({word_count} words)</i>\n\n"
+                        f"🤖 <b>Key Takeaways:</b>\n{ai_text}\n\n"
+                        f"🔗 <a href='{target_url}'>Original Article</a>"
+                    )
+            except Exception:
+                pass
+
+        # Local excerpt fallback (100% free with zero keys needed)
+        excerpt = " ".join(parser.text[:3])[:350] + "..." if parser.text else "No main paragraph text extracted."
+        return (
+            f"📰 <b>Web Page Summary</b>\n\n"
+            f"<b>{title}</b>\n"
+            f"<i>Source: {parsed.hostname} • ~{read_time} min read ({word_count} words)</i>\n\n"
+            f"<b>Excerpt:</b>\n<i>{excerpt}</i>\n\n"
+            f"🔗 <a href='{target_url}'>Visit Page</a>"
+        )
+    except Exception as e:
+        return f"❌ Error extracting web content: {str(e)[:150]}"
+
+
+def answer_ai_query(query: str) -> str:
+    if not GEMINI_API_KEY:
+        return (
+            "ℹ️ <b>AI Q&A is currently inactive:</b>\n"
+            "To use <code>/ask</code>, add a free Google Gemini API key to <code>stock-watcher/.env</code>.\n"
+            "(Free at <a href='https://aistudio.google.com/'>aistudio.google.com</a> with zero credit card needed)."
+        )
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    prompt = f"You are Sentinel, a sharp AI assistant running on a home Raspberry Pi. Answer concisely in 2-4 sentences:\n\n{query}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 300}
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=12)
+        if resp.status_code == 200:
+            return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        else:
+            return f"❌ AI Error (Status {resp.status_code})"
+    except Exception as e:
+        return f"❌ AI request failed: {e}"
+
+
+# ==========================================
 # Interactive Telegram Command Listener
 # ==========================================
 
@@ -989,6 +1108,23 @@ def handle_telegram_command(command_text: str):
     # 6. /ping
     elif cmd in ("/ping", "/speed"):
         send_telegram_message(ping_network_latency())
+
+    # 7. /web <url>
+    elif cmd == "/web":
+        if not args:
+            send_telegram_message("⚠️ Usage: <code>/web &lt;url&gt;</code> (e.g. <code>/web https://techcrunch.com/...</code>)")
+            return
+        send_telegram_message("📖 <i>Extracting article & generating executive summary...</i>")
+        send_telegram_message(extract_web_content(args[0]))
+
+    # 8. /ask <prompt>
+    elif cmd in ("/ask", "/ai"):
+        if not args:
+            send_telegram_message("⚠️ Usage: <code>/ask &lt;your question&gt;</code>")
+            return
+        prompt_text = " ".join(args)
+        send_telegram_message("🤖 <i>Thinking...</i>")
+        send_telegram_message(answer_ai_query(prompt_text))
 
     # 7. /interval <mins>
     elif cmd == "/interval":
@@ -1124,6 +1260,8 @@ def handle_telegram_command(command_text: str):
             f"• <code>/ping</code> - Test internet latency to 1.1.1.1\n\n"
             f"<b>Security & Developer Tools:</b>\n"
             f"• <code>/scan &lt;url&gt;</code> - Headless redirect & safety inspector\n"
+            f"• <code>/web &lt;url&gt;</code> - Extract & summarize any article\n"
+            f"• <code>/ask &lt;question&gt;</code> - Instant AI query\n"
             f"• <code>/cve &lt;pkg&gt;</code> - Instant vulnerability lookup\n"
             f"• <code>/trending</code> - Top trending open-source AI repos\n\n"
             f"<b>Feed & Intelligence Control:</b>\n"

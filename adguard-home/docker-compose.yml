@@ -1,0 +1,19 @@
+services:
+  adguardhome:
+    image: adguard/adguardhome:latest
+    container_name: adguard-home
+    restart: unless-stopped
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "3000:3000/tcp"   # Initial web setup wizard (http://192.168.1.10:3000)
+      - "8080:80/tcp"     # Web management dashboard (http://192.168.1.10:8080)
+      - "853:853/tcp"     # DNS-over-TLS
+    volumes:
+      - ./work:/opt/adguardhome/work
+      - ./conf:/opt/adguardhome/conf
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
