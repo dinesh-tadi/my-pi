@@ -1,7 +1,7 @@
 {
-  "versionCode": 3,
+  "versionCode": 4,
   "versionName": "1.2",
-  "releaseDate": "2026-10-25T06:16:01Z",
+  "releaseDate": "2026-10-25T06:17:44Z",
   "apkPath": "/argon-hub.apk",
-  "releaseNotes": "Added app version badge below header"
+  "releaseNotes": "Formatted version display as 1.2(4)"
 }

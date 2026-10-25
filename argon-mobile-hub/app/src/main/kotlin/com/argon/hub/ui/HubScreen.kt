@@ -116,10 +116,16 @@ fun HubScreen(
                         val installedVersion = remember(context) {
                             try {
                                 val pkgInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-                                val vName = pkgInfo.versionName ?: "1.2"
-                                if (vName.startsWith("v")) vName else "v$vName"
+                                val vName = (pkgInfo.versionName ?: "1.2").removePrefix("v")
+                                val vCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                                    pkgInfo.longVersionCode
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    pkgInfo.versionCode.toLong()
+                                }
+                                "$vName($vCode)"
                             } catch (_: Exception) {
-                                "v1.2"
+                                "1.2(4)"
                             }
                         }
                         Text(
