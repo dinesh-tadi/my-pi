@@ -29,6 +29,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.OpenInBrowser
@@ -38,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -122,65 +125,75 @@ fun ServiceViewerScreen(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize()) {
-        TopAppBar(
-            title = {
-                Column {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+    Scaffold(
+        topBar = {
+            Column {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = currentUrl,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back to Hub"
+                            )
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { webViewRef?.reload() }) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Reload"
+                            )
+                        }
+                        IconButton(onClick = {
+                            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(currentUrl)).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(browserIntent)
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.OpenInBrowser,
+                                contentDescription = "Open in External Browser"
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer
                     )
-                    Text(
-                        text = currentUrl,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back to Hub"
-                    )
-                }
-            },
-            actions = {
-                IconButton(onClick = { webViewRef?.reload() }) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Reload"
-                    )
-                }
-                IconButton(onClick = {
-                    val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(currentUrl)).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(browserIntent)
-                }) {
-                    Icon(
-                        imageVector = Icons.Default.OpenInBrowser,
-                        contentDescription = "Open in External Browser"
-                    )
-                }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer
-            )
-        )
+                )
 
-        if (progress in 1..99) {
-            LinearProgressIndicator(
-                progress = { progress / 100f },
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-
-        Box(modifier = Modifier.weight(1f)) {
+                if (progress in 1..99) {
+                    LinearProgressIndicator(
+                        progress = { progress / 100f },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        },
+        modifier = modifier.fillMaxSize()
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .imePadding()
+        ) {
             AndroidView(
                 factory = { ctx ->
                     WebView(ctx).apply {
