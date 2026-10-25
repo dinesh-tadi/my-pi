@@ -1,0 +1,17 @@
+services:
+  stock-watcher:
+    build: .
+    container_name: stock-watcher
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Persist SQLite database across container restarts
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

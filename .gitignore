@@ -1,0 +1,20 @@
+# Secrets and credentials
+.env
+*.env
+
+# SQLite databases & data volumes
+*.db
+*.sqlite
+data/
+cowrie-data/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# OS artifacts
+.DS_Store
+Thumbs.db

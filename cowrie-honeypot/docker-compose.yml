@@ -1,0 +1,40 @@
+services:
+  cowrie:
+    image: cowrie/cowrie:latest
+    container_name: cowrie-honeypot
+    restart: unless-stopped
+    ports:
+      # Honeypot SSH exposed on port 2222 (Pi's real SSH stays safe on 22)
+      - "2222:2222"
+      # Honeypot Telnet (optional)
+      - "2223:2223"
+    volumes:
+      - ./cowrie-data/logs:/cowrie/cowrie-git/var/log/cowrie
+      - ./cowrie-data/downloads:/cowrie/cowrie-git/var/lib/cowrie/downloads
+      - ./cowrie-data/keys:/cowrie/cowrie-git/etc
+    environment:
+      - COWRIE_TELNET_ENABLED=yes
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  threat-reporter:
+    build: ./reporter
+    container_name: cowrie-threat-reporter
+    restart: unless-stopped
+    depends_on:
+      - cowrie
+    env_file:
+      - ../stock-watcher/.env
+    volumes:
+      - ./cowrie-data/logs:/logs:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_FILE_PATH=/logs/cowrie.json
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
