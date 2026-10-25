@@ -138,6 +138,10 @@ def init_db() -> bool:
             )
         """)
 
+        # Clean up any Docker bridge entries from known_devices
+        cursor.execute("DELETE FROM known_devices WHERE ip LIKE '172.%'")
+        conn.commit()
+
         # Load saved interval
         cursor.execute("SELECT value FROM settings WHERE key = 'interval_minutes'")
         row = cursor.fetchone()
@@ -707,6 +711,35 @@ def send_daily_ai_briefing():
 # Feature 5: /devices & Wi-Fi Watchdog
 # ==========================================
 
+def get_tz_name() -> str:
+    """Returns local timezone abbreviation (e.g. IST)."""
+    return time.tzname[0] if time.tzname else "IST"
+
+
+def format_device_time(ts_str: Optional[str]) -> str:
+    """Converts a stored timestamp into a human-readable local time string (IST)."""
+    if not ts_str:
+        return "Unknown"
+    try:
+        if "T" in ts_str:
+            dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        else:
+            dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        local_dt = dt.astimezone()
+        tz_name = get_tz_name()
+        now = datetime.now().astimezone()
+        time_fmt = local_dt.strftime("%I:%M %p")
+        if local_dt.date() == now.date():
+            return f"Today at {time_fmt} {tz_name}"
+        elif (now.date() - local_dt.date()).days == 1:
+            return f"Yesterday at {time_fmt} {tz_name}"
+        else:
+            date_fmt = local_dt.strftime("%b %d, %I:%M %p")
+            return f"{date_fmt} {tz_name}"
+    except Exception:
+        return ts_str
+
+
 def resolve_mac_vendor(mac: str) -> str:
     prefix = mac.lower()[:8]
     if prefix in mac_vendor_cache:
@@ -724,6 +757,16 @@ def resolve_mac_vendor(mac: str) -> str:
     return "Unknown Vendor"
 
 
+def is_lan_ip(ip: str) -> bool:
+    """Filters out Docker virtual bridges (172.16.x-172.31.x) and loopback."""
+    if ip.startswith(("127.", "169.254.")):
+        return False
+    # Docker default bridges
+    if ip.startswith(("172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.")):
+        return False
+    return True
+
+
 def scan_wifi_devices() -> List[Dict[str, str]]:
     devices = []
     arp_paths = ["/host/proc/net/arp", "/proc/net/arp"]
@@ -739,7 +782,7 @@ def scan_wifi_devices() -> List[Dict[str, str]]:
                             ip = parts[0]
                             mac = parts[3].lower()
                             flags = parts[2]
-                            if mac != "00:00:00:00:00:00" and flags != "0x0":
+                            if mac != "00:00:00:00:00:00" and flags != "0x0" and is_lan_ip(ip):
                                 vendor = resolve_mac_vendor(mac)
                                 devices.append({"ip": ip, "mac": mac, "vendor": vendor})
                 break
@@ -771,12 +814,13 @@ def check_for_new_devices():
                 )
                 conn.commit()
 
+                now_local_str = datetime.now().strftime("%I:%M:%S %p") + f" {get_tz_name()}"
                 alert_msg = (
                     f"🚨 <b>New Device Connected to Wi-Fi!</b>\n\n"
                     f"• <b>IP:</b> <code>{ip}</code>\n"
                     f"• <b>MAC:</b> <code>{mac}</code>\n"
                     f"• <b>Vendor:</b> <i>{vendor}</i>\n"
-                    f"• <b>Time:</b> <code>{datetime.now().strftime('%H:%M:%S')}</code>"
+                    f"• <b>Time:</b> <code>{now_local_str}</code>"
                 )
                 send_telegram_message(alert_msg)
             else:
@@ -856,13 +900,57 @@ def handle_telegram_command(command_text: str):
     # 5. /devices
     elif cmd in ("/devices", "/wifi", "/lan"):
         devs = scan_wifi_devices()
-        if not devs:
-            send_telegram_message("ℹ️ No active devices currently resolved in ARP table.")
+        active_macs = {d["mac"]: d for d in devs}
+
+        # Query all known devices with their first_seen timestamps
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT mac, ip, vendor, first_seen, last_seen FROM known_devices ORDER BY last_seen DESC")
+            all_known = cursor.fetchall()
+
+        if not devs and not all_known:
+            send_telegram_message("ℹ️ No active LAN devices currently detected.")
             return
 
-        lines = [f"📶 <b>Active Devices on Home Network ({len(devs)}):</b>\n"]
-        for d in devs[:12]:
-            lines.append(f"• <code>{d['ip']:<15}</code> | <i>{d['vendor']}</i>\n  <pre>{d['mac']}</pre>")
+        lines = [f"📶 <b>Home Network Devices ({len(devs)} active):</b>\n"]
+
+        # Track which MACs we display
+        displayed_macs = set()
+
+        # Display active devices first
+        for d in devs:
+            mac = d["mac"]
+            ip = d["ip"]
+            vendor = d["vendor"]
+            displayed_macs.add(mac)
+
+            # Get first_seen from database
+            first_seen_str = "Recently"
+            with sqlite3.connect(DB_PATH) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT first_seen FROM known_devices WHERE mac = ?", (mac,))
+                row = cur.fetchone()
+                if row and row[0]:
+                    first_seen_str = format_device_time(row[0])
+
+            lines.append(f"• <b>{ip}</b> | <i>{vendor}</i> (🟢 Active)")
+            lines.append(f"  MAC: <code>{mac}</code>")
+            lines.append(f"  🕒 <b>First Connected:</b> <code>{first_seen_str}</code>")
+            lines.append("")
+
+        # Display any previously known devices that are currently offline
+        offline_count = 0
+        for row in all_known:
+            mac, ip, vendor, first_seen, last_seen = row
+            if mac not in displayed_macs and is_lan_ip(ip):
+                if offline_count == 0:
+                    lines.append("<i>Previously Seen Devices:</i>")
+                offline_count += 1
+                if offline_count <= 5:
+                    first_seen_str = format_device_time(first_seen)
+                    lines.append(f"• <b>{ip}</b> | <i>{vendor}</i> (⚪ Offline)")
+                    lines.append(f"  🕒 <b>First Connected:</b> <code>{first_seen_str}</code>")
+                    lines.append("")
 
         send_telegram_message("\n".join(lines))
 
