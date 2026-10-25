@@ -12,7 +12,7 @@
         container: vaultwarden
         server: my-docker
     - Cowrie Honeypot:
-        icon: shield.png
+        icon: terminal.png
         href: http://192.168.1.10:3001/
         description: SSH & Telnet intrusion deception
         container: cowrie-honeypot

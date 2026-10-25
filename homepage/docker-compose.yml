@@ -10,6 +10,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - PUID=1000
-      - PGID=1000
+      - PGID=985
       - TZ=Asia/Kolkata
       - HOMEPAGE_ALLOWED_HOSTS=*
+    group_add:
+      - "985"
