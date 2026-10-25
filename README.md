@@ -11,7 +11,7 @@ A production-ready collection of lightweight security, intelligence, and privacy
 | **Chromium Sandbox** | `3002` (HTTP), `3003` (HTTPS) | `http://192.168.1.10:3002` | Disposable WebRTC cleanroom browser |
 | **Uptime Kuma** | `3001` (HTTP) | `http://192.168.1.10:3001` | Service health & latency monitor |
 | **Cowrie Honeypot** | `2222` (SSH), `2223` (Telnet) | `ssh -p 2222 root@pi` | Deception honeypot & attack logger |
-| **Vaultwarden** | `8085` (HTTP) | `http://192.168.1.10:8085` | Self-hosted Bitwarden password & secret vault |
+| **Vaultwarden** | `8085` (HTTP), `8443` (HTTPS) | `https://192.168.1.10:8443` | Self-hosted Bitwarden password & secret vault |
 | **Stirling-PDF** | `8086` (HTTP) | `http://192.168.1.10:8086` | 100% private in-browser document editor & OCR |
 | **Syncthing** | `8384` (HTTP), `22000` (Sync) | `http://192.168.1.10:8384` | Encrypted P2P file & Obsidian note sync |
 | **Docker Registry** | `5000` (API), `5001` (HTTP UI) | `http://192.168.1.10:5001` | Private local container registry & web catalog |

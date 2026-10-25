@@ -19,7 +19,7 @@ echo "✅ SSH connection verified."
 # 2. Sync project files to Pi
 echo "📦 Syncing project files to $PI_HOST:$REMOTE_DIR..."
 ssh "$PI_HOST" "mkdir -p $REMOTE_DIR"
-rsync -avz --exclude '.git' --exclude '__pycache__' --exclude '*.db' --exclude 'data' --exclude 'cowrie-data' --exclude 'work' --exclude 'conf' --exclude 'config' --exclude 'Sync' --exclude 'trainingData' --exclude 'extraConfigs' --exclude 'customFiles' --exclude 'logs' \
+rsync -avz --exclude '.git' --exclude '__pycache__' --exclude '*.db' --exclude 'data' --exclude 'caddy_data' --exclude 'cowrie-data' --exclude 'work' --exclude 'conf' --exclude 'config' --exclude 'Sync' --exclude 'trainingData' --exclude 'extraConfigs' --exclude 'customFiles' --exclude 'logs' \
     ./ "$PI_HOST:$REMOTE_DIR/"
 
 # 3. Check for .env file
@@ -37,7 +37,7 @@ ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/cowrie-honeypot/cowrie-data/{logs,downloads
 ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/uptime-kuma/data"
 ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/adguard-home/{work,conf}"
 ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/disposable-browser/config"
-ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/vaultwarden/data"
+ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/vaultwarden/{data,caddy_data}"
 ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/stirling-pdf/{trainingData,extraConfigs,customFiles,logs}"
 ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/syncthing/{config,Sync}"
 ssh "$PI_HOST" "mkdir -p $REMOTE_DIR/docker-registry/data"

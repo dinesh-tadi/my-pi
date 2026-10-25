@@ -8,9 +8,21 @@ services:
       - SIGNUPS_ALLOWED=true
       - INVITATIONS_ALLOWED=true
       - SHOW_PASSWORD_HINT=false
-      - DOMAIN=http://192.168.1.10:8085
+      - DOMAIN=https://192.168.1.10:8443
       - ENABLE_DB_WAL=true
     volumes:
       - ./data:/data
     ports:
       - "8085:80"
+
+  vaultwarden-tls:
+    image: caddy:alpine
+    container_name: vaultwarden-tls
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy_data:/data
+    depends_on:
+      - vaultwarden
