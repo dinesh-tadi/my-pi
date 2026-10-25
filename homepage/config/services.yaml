@@ -42,6 +42,12 @@
         description: In-browser private document studio & OCR
         container: stirling-pdf
         server: my-docker
+    - IT-Tools:
+        icon: it-tools.png
+        href: http://argon-host:8087/
+        description: Swiss army knife of 80+ developer utilities
+        container: it-tools
+        server: my-docker
 
 - System & Management:
     - Uptime Kuma:
@@ -49,6 +55,17 @@
         href: http://argon-host:3001/
         description: Real-time service uptime & ping monitors
         container: uptime-kuma
+        server: my-docker
+    - Beszel Telemetry:
+        icon: beszel.png
+        href: http://argon-host:8090/
+        description: Hardware thermals & system metrics HUD
+        container: beszel
+        server: my-docker
+    - Watchtower:
+        icon: docker.png
+        description: Automated container updater (4:00 AM) • Telegram alerts
+        container: watchtower
         server: my-docker
     - Syncthing:
         icon: syncthing.png

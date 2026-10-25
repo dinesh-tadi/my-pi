@@ -86,8 +86,33 @@ object ServiceRepository {
             port = 8086,
             iconName = "file"
         ),
+        ServiceItem(
+            id = "it-tools",
+            title = "IT-Tools",
+            description = "Swiss Army Knife of 80+ developer utilities & converters",
+            category = "AI & Dev Workspace",
+            port = 8087,
+            iconName = "build"
+        ),
 
         // System & Management
+        ServiceItem(
+            id = "beszel",
+            title = "Beszel Telemetry",
+            description = "Live CPU temperature & system telemetry HUD",
+            category = "System & Management",
+            port = 8090,
+            iconName = "thermostat"
+        ),
+        ServiceItem(
+            id = "watchtower",
+            title = "Watchtower",
+            description = "Automated container updates at 4:00 AM • Telegram alerts",
+            category = "System & Management",
+            port = 0,
+            iconName = "update",
+            isWebUi = false
+        ),
         ServiceItem(
             id = "kuma",
             title = "Uptime Kuma",

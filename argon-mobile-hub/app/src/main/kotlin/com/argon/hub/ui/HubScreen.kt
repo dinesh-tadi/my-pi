@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DataObject
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Dns
@@ -34,6 +35,8 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Thermostat
+import androidx.compose.material.icons.filled.Update
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -282,16 +285,19 @@ fun NativeServicesList(
 
     if (infoService != null) {
         val s = infoService!!
+        val infoText = if (s.id == "watchtower") {
+            "Watchtower is an automated background daemon that monitors all 19 Docker containers on your Raspberry Pi.\n\n" +
+            "Every night at 4:00 AM, it checks for updated container images, gracefully pulls them, and sends a notification directly to your Telegram bot.\n\n" +
+            "It also cleans up old unused image layers to preserve microSD disk space."
+        } else {
+            "Cowrie is an active SSH & Telnet decoy honeypot running on ports 2222 and 2223.\n\n" +
+            "It silently captures attacker intrusion sessions in the background and delivers real-time threat intelligence directly to your Telegram bot.\n\n" +
+            "Because it is a deception sensor, it runs purely in the background without an HTTP web dashboard."
+        }
         AlertDialog(
             onDismissRequest = { infoService = null },
             title = { Text(s.title) },
-            text = {
-                Text(
-                    "Cowrie is an active SSH & Telnet decoy honeypot running on ports 2222 and 2223.\n\n" +
-                    "It silently captures attacker intrusion sessions in the background and delivers real-time threat intelligence directly to your Telegram bot.\n\n" +
-                    "Because it is a deception sensor, it runs purely in the background without an HTTP web dashboard."
-                )
-            },
+            text = { Text(infoText) },
             confirmButton = {
                 TextButton(onClick = { infoService = null }) {
                     Text("Understood")
@@ -416,6 +422,9 @@ fun getIconForService(name: String): ImageVector = when (name) {
     "sync" -> Icons.Default.Sync
     "layers" -> Icons.Default.Layers
     "send" -> Icons.AutoMirrored.Filled.Send
+    "build" -> Icons.Default.Build
+    "thermostat" -> Icons.Default.Thermostat
+    "update" -> Icons.Default.Update
     else -> Icons.AutoMirrored.Filled.OpenInNew
 }
 
