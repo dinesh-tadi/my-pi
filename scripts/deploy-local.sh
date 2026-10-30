@@ -46,13 +46,19 @@ mkdir -p adguard-home/{work,conf}
 mkdir -p disposable-browser/config
 mkdir -p vaultwarden/{data,caddy_data}
 mkdir -p stirling-pdf/{trainingData,extraConfigs,customFiles,logs}
-mkdir -p syncthing/{config,Sync}
+mkdir -p syncthing/{config,Sync/backups}
 mkdir -p docker-registry/data
 mkdir -p homepage/config
 mkdir -p qdrant/storage
 mkdir -p crowdsec/{config,data}
 mkdir -p argon-ota/dist
 mkdir -p argon-auth/data
+
+# Ensure backup cron job (every 6 hours)
+chmod +x scripts/backup-pi.sh scripts/backup-pi.py
+(crontab -l 2>/dev/null | grep -q 'backup-pi.sh') || (
+    (crontab -l 2>/dev/null; echo '0 */6 * * * /home/argon/american-pi/scripts/backup-pi.sh >> /home/argon/american-pi/syncthing/Sync/backups/backup.log 2>&1') | crontab -
+) || true
 
 # Ensure honeypot permissions if required
 [ -d cowrie-honeypot/cowrie-data ] && chmod -R 777 cowrie-honeypot/cowrie-data 2>/dev/null || true
