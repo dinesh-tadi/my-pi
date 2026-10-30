@@ -1,4 +1,10 @@
 - Core Security & DNS:
+    - Argon Mobile Hub:
+        icon: android.png
+        href: http://100.123.87.122:5050/argon-hub.apk
+        description: Direct download Android client APK (v2.0)
+        container: argon-ota
+        server: my-docker
     - Identity & User Access:
         icon: authentik.png
         href: http://100.123.87.122:8089/admin
