@@ -2,9 +2,7 @@ import os
 import sqlite3
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-from passlib.context import CryptContext
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+import bcrypt
 
 DB_DIR = os.getenv("AUTH_DB_DIR", "/data")
 os.makedirs(DB_DIR, exist_ok=True)
@@ -18,12 +16,17 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    pwd_bytes = password.encode("utf-8")[:72]
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pwd_bytes, salt).decode("utf-8")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     if not hashed_password:
         return False
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return bcrypt.checkpw(plain_password.encode("utf-8")[:72], hashed_password.encode("utf-8"))
+    except Exception:
+        return False
 
 def init_db(initial_admin_password: str = "ArgonAdmin2026!"):
     with get_connection() as conn:
