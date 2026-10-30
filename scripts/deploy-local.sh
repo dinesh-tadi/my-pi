@@ -7,6 +7,22 @@ set -euo pipefail
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$BASE_DIR"
 
+notify_failure() {
+    local lineno="$1"
+    if [ -f "stock-watcher/.env" ]; then
+        BOT_TOKEN=$(grep -E '^TELEGRAM_BOT_TOKEN=' stock-watcher/.env | cut -d '=' -f2- | tr -d ' "')
+        CHAT_ID=$(grep -E '^TELEGRAM_CHAT_ID=' stock-watcher/.env | cut -d '=' -f2- | tr -d ' "')
+        if [ -n "$BOT_TOKEN" ] && [ -n "$CHAT_ID" ]; then
+            COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "latest")
+            curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+                -d chat_id="${CHAT_ID}" \
+                -d parse_mode="HTML" \
+                -d text="❌ <b>My Pi Deployment FAILED!</b>%0A• <b>Failed at line:</b> ${lineno}%0A• <b>Commit:</b> <code>${COMMIT_SHORT}</code>%0A• <b>Host:</b> $(hostname)" >/dev/null 2>&1 || true
+        fi
+    fi
+}
+trap 'notify_failure $LINENO' ERR
+
 echo "=========================================================="
 echo "🚀 Deploying My Pi Stack on $(hostname): $(date)"
 echo "Directory: $BASE_DIR"
@@ -86,3 +102,25 @@ echo "=========================================================="
 echo "🎉 Deployment Complete! Live Containers on your Pi:"
 echo "=========================================================="
 docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+# 6. Send Telegram Notification
+if [ -f "stock-watcher/.env" ]; then
+    BOT_TOKEN=$(grep -E '^TELEGRAM_BOT_TOKEN=' stock-watcher/.env | cut -d '=' -f2- | tr -d ' "')
+    CHAT_ID=$(grep -E '^TELEGRAM_CHAT_ID=' stock-watcher/.env | cut -d '=' -f2- | tr -d ' "')
+
+    if [ -n "$BOT_TOKEN" ] && [ -n "$CHAT_ID" ]; then
+        COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "latest")
+        COMMIT_MSG=$(git log -1 --pretty=%s 2>/dev/null || echo "Manual deployment")
+        ACTIVE_COUNT=$(docker ps -q | wc -l | tr -d ' ')
+        TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+
+        MSG="🚀 <b>My Pi Deployment Successful!</b>%0A• <b>Commit:</b> <code>${COMMIT_SHORT}</code>: ${COMMIT_MSG}%0A• <b>Containers Running:</b> ${ACTIVE_COUNT}%0A• <b>Host:</b> $(hostname)%0A• <b>Time:</b> ${TIMESTAMP}"
+
+        echo "📲 Sending Telegram deployment notification..."
+        curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            -d parse_mode="HTML" \
+            -d text="${MSG}" >/dev/null 2>&1 || true
+        echo "✅ Telegram notification dispatched."
+    fi
+fi
