@@ -2,6 +2,11 @@
 .env
 *.env
 
+# Backups & Syncthing shared data
+syncthing/Sync/
+backups/
+*.tar.gz
+
 # SQLite databases & data volumes
 *.db
 *.sqlite
