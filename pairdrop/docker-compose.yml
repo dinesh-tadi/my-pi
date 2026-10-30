@@ -7,11 +7,14 @@ services:
       - "8088:3000"
     volumes:
       - ./rtc_config.json:/config/rtc_config.json:ro
+      - ./peer.js:/app/pairdrop/server/peer.js:ro
     environment:
       - PUID=1000
       - PGID=1000
       - TZ=Asia/Kolkata
       - WS_FALLBACK=true
+      - FORCE_WS=true
+      - DEBUG_MODE=true
       - RATE_LIMIT=false
       - RTC_CONFIG=/config/rtc_config.json
     logging:
