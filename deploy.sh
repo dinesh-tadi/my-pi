@@ -24,14 +24,16 @@ rsync -avz --exclude '.git' --exclude '__pycache__' --exclude '*.db' --exclude '
 # Sync homepage config specifically so updates are tracked
 rsync -avz ./homepage/config/ "$PI_HOST:$REMOTE_DIR/homepage/config/"
 
-# 3. Check for .env file
+# 3. Check for .env files
 echo "🔑 Checking environment configuration..."
-if ssh "$PI_HOST" "[ ! -f $REMOTE_DIR/stock-watcher/.env ]"; then
-    if [ -f "./stock-watcher/.env" ]; then
-        echo "Uploading local .env to Pi..."
-        rsync -avz ./stock-watcher/.env "$PI_HOST:$REMOTE_DIR/stock-watcher/.env"
+for service in stock-watcher watchtower cowrie-honeypot; do
+    if [ -f "./$service/.env" ]; then
+        if ssh "$PI_HOST" "[ ! -f $REMOTE_DIR/$service/.env ]"; then
+            echo "Uploading local $service/.env to Pi..."
+            rsync -avz "./$service/.env" "$PI_HOST:$REMOTE_DIR/$service/.env"
+        fi
     fi
-fi
+done
 
 # 4. Prepare data directories
 echo "📁 Preparing service data directories..."

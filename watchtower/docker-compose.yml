@@ -3,13 +3,15 @@ services:
     image: containrrr/watchtower:latest
     container_name: watchtower
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       - DOCKER_API_VERSION=1.45
       - TZ=Asia/Kolkata
       - WATCHTOWER_CLEANUP=true
       - WATCHTOWER_SCHEDULE=0 0 4 * * *
       - WATCHTOWER_NOTIFICATIONS=shoutrrr
-      - WATCHTOWER_NOTIFICATION_URL=telegram://${WATCHTOWER_NOTIFICATION_URL}
+      - WATCHTOWER_NOTIFICATION_URL=${WATCHTOWER_NOTIFICATION_URL}
       - WATCHTOWER_NOTIFICATION_TITLE_TAG=Argon-Watchtower
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
