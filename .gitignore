@@ -5,8 +5,12 @@
 # SQLite databases & data volumes
 *.db
 *.sqlite
-/data/
-/cowrie-data/
+**/data/
+**/work/
+**/caddy_data/
+**/cowrie-data/
+**/storage/
+beszel/beszel_key*
 
 # Python cache
 __pycache__/
