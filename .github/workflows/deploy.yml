@@ -36,6 +36,7 @@ jobs:
           # Mock .env files for validation step if needed
           [ -f stock-watcher/.env.example ] && [ ! -f stock-watcher/.env ] && cp stock-watcher/.env.example stock-watcher/.env || true
           [ -f watchtower/.env.example ] && [ ! -f watchtower/.env ] && cp watchtower/.env.example watchtower/.env || true
+          [ -f argon-auth/.env.example ] && [ ! -f argon-auth/.env ] && cp argon-auth/.env.example argon-auth/.env || true
 
           FAILED=0
           for dir in */; do

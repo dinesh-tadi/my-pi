@@ -52,12 +52,19 @@ mkdir -p homepage/config
 mkdir -p qdrant/storage
 mkdir -p crowdsec/{config,data}
 mkdir -p argon-ota/dist
+mkdir -p argon-auth/data
 
 # Ensure honeypot permissions if required
 [ -d cowrie-honeypot/cowrie-data ] && chmod -R 777 cowrie-honeypot/cowrie-data 2>/dev/null || true
 
 # 3. Update custom-built containers if code changed
 echo "🔨 Building custom microservices if updated..."
+if [ -d "argon-auth" ] && [ -f "argon-auth/docker-compose.yml" ]; then
+    echo "➡️ Building & starting argon-auth..."
+    [ ! -f "argon-auth/.env" ] && [ -f "argon-auth/.env.example" ] && cp argon-auth/.env.example argon-auth/.env || true
+    (cd argon-auth && docker compose up -d --build)
+fi
+
 if [ -d "stock-watcher" ] && [ -f "stock-watcher/docker-compose.yml" ]; then
     echo "➡️ Building & starting stock-watcher..."
     (cd stock-watcher && docker compose up -d --build)
