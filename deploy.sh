@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
-PI_HOST="pi"
-REMOTE_DIR="~/my-pi"
+PI_HOST="${PI_HOST:-pi}"
+REMOTE_DIR="${REMOTE_DIR:-~/my-pi}"
 
 echo "=========================================================="
-echo "🚀 Deploying American-Pi Full Ops Suite to Raspberry Pi"
+echo "🚀 Deploying My-Pi Full Ops Suite to Raspberry Pi"
 echo "=========================================================="
 
 # 1. Test SSH connectivity
