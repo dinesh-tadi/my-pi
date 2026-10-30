@@ -58,9 +58,33 @@ Send any of these commands to **Pi Sentinel** in Telegram:
 
 ---
 
-## 🛠️ Management & Deployment
+## 🛠️ Management & CI/CD Deployment
 
-Deploy or update all services from your Mac:
-```bash
-./deploy.sh
-```
+### Branch & PR Workflow Convention
+1. Create a feature branch from `main`:
+   ```bash
+   git checkout -b feat/your-feature
+   ```
+2. Make changes, commit, and push to GitHub:
+   ```bash
+   git push -u origin feat/your-feature
+   ```
+3. Open a Pull Request to `main`. GitHub Actions will automatically run linting and validate all Docker Compose syntax.
+4. On merging the PR into `main`, GitHub Actions automatically connects over Tailscale and deploys to the Raspberry Pi!
+
+### Local Deployment
+You can also run deployment manually from Mac or directly on the Pi:
+- **From Mac:**
+  ```bash
+  ./deploy.sh
+  ```
+- **Directly on the Pi:**
+  ```bash
+  ./scripts/deploy-local.sh
+  ```
+
+### Required GitHub Secrets (Repository Settings -> Secrets -> Actions)
+* `TAILSCALE_AUTHKEY` — Tailscale Auth Key (generated from Tailscale Admin Console)
+* `PI_HOST` — Tailscale IP of the Pi (`100.123.87.122`)
+* `PI_USER` — `argon`
+* `PI_SSH_KEY` — Private SSH key authorized in `/home/argon/.ssh/authorized_keys`

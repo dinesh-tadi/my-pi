@@ -1,0 +1,81 @@
+name: CI/CD Pipeline & Pi Deployment
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Lint & Validate Stacks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Check Shell Script Syntax
+        run: |
+          echo "Checking shell scripts..."
+          bash -n deploy.sh
+          if [ -d scripts ]; then
+            for f in scripts/*.sh; do
+              [ -e "$f" ] && bash -n "$f"
+            done
+          fi
+          echo "✅ Shell scripts syntax valid!"
+
+      - name: Validate Docker Compose Stacks
+        run: |
+          echo "Validating Docker Compose configurations..."
+          # Mock .env files for validation step if needed
+          [ -f stock-watcher/.env.example ] && [ ! -f stock-watcher/.env ] && cp stock-watcher/.env.example stock-watcher/.env || true
+          [ -f watchtower/.env.example ] && [ ! -f watchtower/.env ] && cp watchtower/.env.example watchtower/.env || true
+
+          FAILED=0
+          for dir in */; do
+            if [ -f "${dir}docker-compose.yml" ]; then
+              echo "Checking ${dir}docker-compose.yml..."
+              if (cd "$dir" && docker compose config > /dev/null); then
+                echo "  -> Valid"
+              else
+                echo "  -> ❌ FAILED"
+                FAILED=1
+              fi
+            fi
+          done
+
+          if [ $FAILED -ne 0 ]; then
+            echo "❌ Validation failed for one or more Docker Compose files."
+            exit 1
+          fi
+          echo "✅ All 17 Docker Compose stacks are syntactically valid!"
+
+  deploy:
+    name: Deploy to Raspberry Pi
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+      - name: Deploy on Raspberry Pi via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.PI_HOST || '100.123.87.122' }}
+          username: ${{ secrets.PI_USER || 'argon' }}
+          key: ${{ secrets.PI_SSH_KEY }}
+          script: |
+            set -e
+            echo "Connected to Raspberry Pi: $(hostname)"
+            cd ~/my-pi
+            chmod +x scripts/deploy-local.sh
+            ./scripts/deploy-local.sh
