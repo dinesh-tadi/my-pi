@@ -52,7 +52,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 DEFAULT_KEYWORDS = [
     "NVDA", "AAPL", "TSLA", "MSFT", "GOOG", "AMZN", "META", "AMD",
-    "OpenAI", "Anthropic", "zero-day", "ransomware", "earnings", "acquisition"
+    "OpenAI", "Anthropic", "zero-day", "ransomware", "earnings", "acquisition",
+    "NSE", "NIFTY", "NIFTY50", "SENSEX", "BSE", "RELIANCE", "TCS", "INFY"
 ]
 DEFAULT_INTERVAL = int(os.getenv("POLL_INTERVAL_MINUTES", "15"))
 DEFAULT_MAX_AGE_HOURS = int(os.getenv("MAX_ARTICLE_AGE_HOURS", "24"))
@@ -81,19 +82,31 @@ mac_vendor_cache: Dict[str, str] = {
     "24:0a:c4": "Espressif (IoT)", "30:ae:a4": "Espressif (IoT)", "84:0d:8e": "Espressif (IoT)"
 }
 
-# Default RSS Feeds
+# Default RSS Feeds (Global Tech & Indian / NSE Markets)
 FEEDS = [
     {
-        "name": "Yahoo Finance",
+        "name": "Yahoo Finance (US)",
         "url": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA,AAPL,TSLA,MSFT,GOOG,AMZN,META,AMD&region=US&lang=en-US"
     },
     {
-        "name": "Google News",
+        "name": "Google News (Tech)",
         "url": "https://news.google.com/rss/search?q=Nvidia+OR+OpenAI+OR+Anthropic+OR+earnings&hl=en-US&gl=US&ceid=US:en"
     },
     {
         "name": "BleepingComputer",
         "url": "https://www.bleepingcomputer.com/feed/"
+    },
+    {
+        "name": "Economic Times Markets (India)",
+        "url": "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"
+    },
+    {
+        "name": "Google News (NSE / Indian Markets)",
+        "url": "https://news.google.com/rss/search?q=NSE+OR+BSE+OR+Nifty+OR+Sensex+OR+\"Indian+market\"&hl=en-IN&gl=IN&ceid=IN:en"
+    },
+    {
+        "name": "Yahoo Finance (India / NSE)",
+        "url": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^NSEI,^BSESN,RELIANCE.NS,TCS.NS,INFY.NS,HDFCBANK.NS,ICICIBANK.NS,SBIN.NS,BHARTIARTL.NS&region=IN&lang=en-IN"
     }
 ]
 
@@ -306,19 +319,45 @@ def send_telegram_message(text: str) -> bool:
         return False
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True
-    }
 
-    try:
-        resp = requests.post(url, json=payload, timeout=10)
-        return resp.status_code == 200
-    except Exception as e:
-        logger.error("Network error sending Telegram message: %s", e)
-        return False
+    # Split long texts into paragraph chunks <= 3800 chars to prevent Telegram 400 Bad Request
+    chunks = []
+    if len(text) <= 3900:
+        chunks = [text]
+    else:
+        paragraphs = text.split("\n\n")
+        current_chunk = []
+        current_len = 0
+        for p in paragraphs:
+            if current_len + len(p) + 2 > 3800 and current_chunk:
+                chunks.append("\n\n".join(current_chunk))
+                current_chunk = []
+                current_len = 0
+            current_chunk.append(p)
+            current_len += len(p) + 2
+        if current_chunk:
+            chunks.append("\n\n".join(current_chunk))
+
+    all_ok = True
+    for chunk in chunks:
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": chunk,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True
+        }
+
+        try:
+            resp = requests.post(url, json=payload, timeout=10)
+            if resp.status_code != 200:
+                all_ok = False
+                logger.error("Telegram error (%d): %s", resp.status_code, resp.text)
+        except Exception as e:
+            logger.error("Network error sending Telegram message: %s", e)
+            all_ok = False
+        time.sleep(0.3)
+
+    return all_ok
 
 
 def seed_database_quietly():
@@ -402,22 +441,18 @@ def check_feeds(manual_trigger: bool = False):
         return
 
     total_matched = len(matched_articles)
-    articles_to_send = matched_articles[:3]
-
+    # Never hide news articles: send all matched updates!
     lines = [
-        f"📊 <b>Market & Tech Sentinel</b> (<code>{len(articles_to_send)} new update{'s' if len(articles_to_send) > 1 else ''}</code>)",
+        f"📊 <b>Market & Tech Sentinel</b> (<code>{total_matched} new update{'s' if total_matched > 1 else ''}</code>)",
         ""
     ]
 
-    for item in articles_to_send:
+    for item in matched_articles:
         tags_str = " ".join(item["tags"])
         lines.append(f"• <b>{item['title']}</b>")
         lines.append(f"  <i>{item['source']}</i> • <code>{item['rel_time']}</code> | <code>{tags_str}</code>")
         lines.append(f"  🔗 <a href='{item['link']}'>Read Article</a>")
         lines.append("")
-
-    if total_matched > 3:
-        lines.append(f"<i>(+{total_matched - 3} other matches filtered out)</i>")
 
     digest_text = "\n".join(lines)
     send_telegram_message(digest_text)
@@ -711,9 +746,137 @@ def get_trending_ai_repos() -> str:
 
 
 def send_daily_ai_briefing():
-    logger.info("Sending scheduled 9:00 AM AI briefing...")
+    logger.info("Sending scheduled 9:00 AM AI briefing & Market Snapshot...")
+    market = get_indian_market_summary()
     report = get_trending_ai_repos()
-    send_telegram_message(f"🌅 <b>Daily AI & ML Briefing</b>\n\n{report}")
+    send_telegram_message(f"🌅 <b>Daily Morning Intelligence Briefing</b>\n\n{market}\n\n<b>Trending AI & ML Repositories:</b>\n{report}")
+
+
+# ==========================================
+# Feature 4b: Stock & Market Intelligence (NSE & Global)
+# ==========================================
+
+def get_quote(symbol: str) -> Optional[Dict[str, Any]]:
+    """Fetches real-time stock/index quote from Yahoo Finance API (NSE, BSE, US)."""
+    sym = symbol.upper().strip()
+    aliases = {
+        'NIFTY': '^NSEI',
+        'NIFTY50': '^NSEI',
+        'SENSEX': '^BSESN',
+        'BANKNIFTY': '^NSEBANK',
+        'NIFTYBANK': '^NSEBANK',
+        'NIFTYIT': '^CNXIT',
+    }
+    target_sym = aliases.get(sym, sym)
+
+    candidates = [target_sym]
+    if '.' not in target_sym and not target_sym.startswith('^'):
+        # For plain tickers, prioritize Indian NSE (.NS), then BSE (.BO), then US / global
+        candidates = [f"{target_sym}.NS", target_sym, f"{target_sym}.BO"]
+
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+    for s in candidates:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{s}?interval=1d"
+        try:
+            resp = requests.get(url, headers=headers, timeout=6)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            res = data.get("chart", {}).get("result")
+            if not res:
+                continue
+            meta = res[0]["meta"]
+            price = meta.get("regularMarketPrice")
+            if price is None:
+                continue
+            prev = meta.get("chartPreviousClose", meta.get("previousClose", price))
+            chg = price - prev if prev else 0.0
+            pct = (chg / prev) * 100 if prev else 0.0
+            currency = meta.get("currency", "INR")
+            high = meta.get("regularMarketDayHigh", price)
+            low = meta.get("regularMarketDayLow", price)
+            name = meta.get("shortName") or meta.get("longName") or s
+
+            if s.endswith(".NS"):
+                exchange = "NSE (National Stock Exchange)"
+            elif s.endswith(".BO"):
+                exchange = "BSE (Bombay Stock Exchange)"
+            elif s.startswith("^"):
+                exchange = "Benchmark Index"
+            else:
+                exchange = meta.get("exchangeName", "Global Market")
+
+            return {
+                "symbol": s,
+                "name": name,
+                "price": price,
+                "change": chg,
+                "pct": pct,
+                "currency": currency,
+                "high": high,
+                "low": low,
+                "prev": prev,
+                "exchange": exchange
+            }
+        except Exception:
+            continue
+    return None
+
+
+def format_quote_message(q: Dict[str, Any]) -> str:
+    sym = q["symbol"]
+    curr = "₹" if q["currency"] == "INR" else ("$" if q["currency"] == "USD" else f"{q['currency']} ")
+    chg = q["change"]
+    pct = q["pct"]
+    icon = "🟢" if chg >= 0 else "🔴"
+    sign = "+" if chg >= 0 else ""
+
+    lines = [
+        f"📈 <b>{q['name']}</b> (<code>{sym}</code>)",
+        f"• <b>Price:</b> <code>{curr}{q['price']:,.2f}</code>",
+        f"• <b>Change:</b> {icon} <code>{sign}{chg:,.2f} ({sign}{pct:.2f}%)</code>",
+        f"• <b>Day Range:</b> <code>{curr}{q['low']:,.2f}</code> - <code>{curr}{q['high']:,.2f}</code>",
+        f"• <b>Prev Close:</b> <code>{curr}{q['prev']:,.2f}</code>",
+        f"• <b>Exchange:</b> <code>{q['exchange']}</code>"
+    ]
+    return "\n".join(lines)
+
+
+def get_indian_market_summary() -> str:
+    """Provides a live snapshot of major Indian benchmark indices & trading session status."""
+    indices = [
+        ("NIFTY 50", "^NSEI"),
+        ("S&P BSE SENSEX", "^BSESN"),
+        ("BANK NIFTY", "^NSEBANK"),
+        ("NIFTY IT", "^CNXIT")
+    ]
+    lines = ["🇮🇳 <b>Indian Stock Market Snapshot (NSE / BSE)</b>", ""]
+    for label, sym in indices:
+        q = get_quote(sym)
+        if q:
+            icon = "🟢" if q["change"] >= 0 else "🔴"
+            sign = "+" if q["change"] >= 0 else ""
+            lines.append(f"• <b>{label}:</b> <code>{q['price']:,.2f}</code> {icon} (<code>{sign}{q['pct']:.2f}%</code>)")
+        else:
+            lines.append(f"• <b>{label}:</b> <i>Data temporarily unavailable</i>")
+
+    lines.append("")
+    # Check if equity market is currently open in IST (UTC+5:30)
+    # Standard equity hours: 09:15 AM to 03:30 PM IST, Monday to Friday
+    now_ist = datetime.now(timezone(timedelta(hours=5, minutes=30)))
+    is_weekday = now_ist.weekday() < 5
+    market_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+    market_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+
+    if is_weekday and market_open <= now_ist <= market_close:
+        status_text = "🟢 <b>Market Status: OPEN</b> (Trading session active)"
+    else:
+        status_text = "⚪ <b>Market Status: CLOSED</b> (Next session: 9:15 AM IST)"
+
+    lines.append(f"🕒 <i>IST: {now_ist.strftime('%d %b %Y, %I:%M %p')}</i>")
+    lines.append(status_text)
+    lines.append("\n<i>Tip: Check any stock with <code>/stock &lt;ticker&gt;</code> (e.g. <code>/stock RELIANCE</code> or <code>/stock TCS</code>).</i>")
+    return "\n".join(lines)
 
 
 # ==========================================
@@ -1182,11 +1345,30 @@ def handle_telegram_command(command_text: str):
         send_telegram_message(
             f"📋 <b>Watchlist Keywords ({len(kws)}):</b>\n"
             f"<code>{', '.join(kws)}</code>\n\n"
-            f"Add ticker: <code>/add INTEL</code>\n"
-            f"Remove ticker: <code>/remove TSLA</code>"
+            f"Add keyword/ticker: <code>/add RELIANCE</code>\n"
+            f"Remove keyword/ticker: <code>/remove TSLA</code>\n"
+            f"Check live quote: <code>/stock RELIANCE</code>"
         )
 
-    # 12. /add <word>
+    # 12. /stock <ticker> or /quote <ticker>
+    elif cmd in ("/stock", "/quote", "/price"):
+        if not args:
+            send_telegram_message("⚠️ Usage: <code>/stock &lt;ticker&gt;</code>\n\nExamples:\n• <code>/stock RELIANCE</code>\n• <code>/stock TCS</code>\n• <code>/stock INFY</code>\n• <code>/stock NVDA</code>")
+            return
+        sym = args[0].strip()
+        send_telegram_message(f"🔍 <i>Fetching live quote for {sym.upper()}...</i>")
+        q = get_quote(sym)
+        if q:
+            send_telegram_message(format_quote_message(q))
+        else:
+            send_telegram_message(f"❌ Could not find quote for <b>{sym.upper()}</b>. Check ticker spelling (e.g. <code>/stock INFY</code> or <code>/stock AAPL</code>).")
+
+    # 13. /nse or /market or /nifty
+    elif cmd in ("/nse", "/market", "/nifty"):
+        send_telegram_message("📊 <i>Fetching Indian market benchmark snapshot...</i>")
+        send_telegram_message(get_indian_market_summary())
+
+    # 14. /add <word>
     elif cmd == "/add":
         if not args:
             send_telegram_message("⚠️ Usage: <code>/add &lt;word&gt;</code>")
@@ -1201,7 +1383,7 @@ def handle_telegram_command(command_text: str):
                 msg = f"ℹ️ <b>{new_word}</b> is already in your watchlist."
         send_telegram_message(msg)
 
-    # 13. /remove <word>
+    # 15. /remove <word>
     elif cmd in ("/remove", "/del"):
         if not args:
             send_telegram_message("⚠️ Usage: <code>/remove &lt;word&gt;</code>")
@@ -1217,10 +1399,16 @@ def handle_telegram_command(command_text: str):
                 msg = f"ℹ️ <b>{del_word}</b> was not found in your watchlist."
         send_telegram_message(msg)
 
-    # 14. /help
+    # 16. /help
     elif cmd in ("/help", "/start"):
         help_text = (
             f"🛡️ <b>Sentinel Ops Command Menu</b>\n\n"
+            f"<b>Stocks & Market Intelligence:</b>\n"
+            f"• <code>/stock &lt;ticker&gt;</code> - Real-time stock quote (NSE, BSE, US)\n"
+            f"• <code>/nse</code> or <code>/market</code> - Live NIFTY 50, SENSEX, BANK NIFTY & session status\n"
+            f"• <code>/list</code> - Show active news watchlist keywords\n"
+            f"• <code>/add &lt;word&gt;</code> - Add ticker or topic to news alerts (e.g. /add RELIANCE)\n"
+            f"• <code>/remove &lt;word&gt;</code> - Remove keyword from watchlist\n\n"
             f"<b>Hardware & Network:</b>\n"
             f"• <code>/pi</code> - Real-time CPU temp, RAM, Disk, & Docker\n"
             f"• <code>/devices</code> - List active devices on home Wi-Fi\n"
@@ -1234,10 +1422,7 @@ def handle_telegram_command(command_text: str):
             f"• <code>/interval &lt;mins&gt;</code> - Change check frequency\n"
             f"• <code>/age &lt;hours&gt;</code> - Set max article age cutoff (e.g. /age 24)\n"
             f"• <code>/check</code> - Run an instant feed check now\n"
-            f"• <code>/status</code> - Complete bot status overview\n"
-            f"• <code>/list</code> - Show active watchlist tickers\n"
-            f"• <code>/add &lt;word&gt;</code> - Add keyword\n"
-            f"• <code>/remove &lt;word&gt;</code> - Remove keyword"
+            f"• <code>/status</code> - Complete bot status overview"
         )
         send_telegram_message(help_text)
 
