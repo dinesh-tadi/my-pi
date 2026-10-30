@@ -70,15 +70,18 @@ def get_current_user(
 
     user = auth_db.get_user_by_id(int(payload["sub"]))
     if not user:
-        raise HTTPException(status_code=401, detail="User account not found")
+        raise HTTPException(status_code=401, detail="User account not found or removed")
+
     return user
 
 def require_admin(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Administrator privileges required")
+        raise HTTPException(status_code=403, detail="Admin privileges required")
     return user
 
-# Pydantic Request Models
+
+# --- Pydantic Request Models ---
+
 class LoginRequest(BaseModel):
     login: str
     password: str
@@ -99,7 +102,8 @@ class RoleUpdateRequest(BaseModel):
 class PasswordResetRequest(BaseModel):
     new_password: str
 
-# --- Authentication APIs ---
+
+# --- Public Authentication Endpoints ---
 
 @app.post("/api/auth/login")
 def login(req: LoginRequest, response: Response):
@@ -125,45 +129,53 @@ def login(req: LoginRequest, response: Response):
 
 @app.post("/api/auth/google")
 def google_auth(req: GoogleAuthRequest, response: Response):
-    # Verify ID token with Google's public tokeninfo endpoint
+    # Verify Google token via Google TokenInfo API
     try:
-        with httpx.Client(timeout=10) as client:
-            res = client.get(f"https://oauth2.googleapis.com/tokeninfo?id_token={req.id_token}")
-            if res.status_code != 200:
-                raise HTTPException(status_code=401, detail="Invalid Google token")
-            google_data = res.json()
+        res = httpx.get(
+            f"https://oauth2.googleapis.com/tokeninfo?id_token={req.id_token}",
+            timeout=5.0
+        )
+        if res.status_code != 200:
+            raise HTTPException(status_code=401, detail="Invalid Google ID token")
+        payload = res.json()
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Google token verification failed: {str(e)}")
+        raise HTTPException(status_code=401, detail=f"Google token verification failed: {str(e)}")
 
-    email = google_data.get("email")
-    google_id = google_data.get("sub")
-    name = google_data.get("name") or email.split("@")[0]
+    if GOOGLE_CLIENT_ID and payload.get("aud") != GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=401, detail="Google client ID mismatch")
+
+    email = payload.get("email")
+    google_id = payload.get("sub")
+    name = payload.get("name")
 
     if not email:
-        raise HTTPException(status_code=400, detail="Google token missing email")
+        raise HTTPException(status_code=400, detail="Google token does not contain an email address")
 
-    user = auth_db.get_user_by_email(email)
-
-    if user:
-        # Existing user by email: link google_id if not present
-        if not user.get("google_id"):
+    # Match existing user by Google ID or Email
+    user = auth_db.get_user_by_google_id(google_id)
+    if not user:
+        user = auth_db.get_user_by_email(email)
+        if user:
+            # Link Google ID to existing account
             auth_db.link_google_id(user["id"], google_id)
             user["google_id"] = google_id
-    else:
-        # New user via Google
+
+    if not user:
         if not ALLOW_GOOGLE_SIGNUP:
             raise HTTPException(
                 status_code=403,
-                detail="Google sign-up is disabled. Contact your administrator to invite your email first."
+                detail="New user self-registration via Google is disabled. Please request an admin to create your account."
             )
-        username = email.split("@")[0].replace(".", "_")
-        # Ensure unique username
-        existing = auth_db.get_user_by_login(username)
-        if existing:
-            username = f"{username}_{int(time.time()) % 1000}"
+        # Create new user profile with role='user'
+        base_username = email.split("@")[0].lower()
+        candidate = base_username
+        idx = 1
+        while auth_db.get_user_by_login(candidate):
+            candidate = f"{base_username}{idx}"
+            idx += 1
 
         user = auth_db.create_user(
-            username=username,
+            username=candidate,
             email=email,
             password=None,
             role="user",
@@ -196,7 +208,7 @@ def logout(response: Response):
     response.delete_cookie("argon_token")
     return {"message": "Logged out successfully"}
 
-# --- Forward-Auth Endpoint (For Nginx / Caddy / Traefik Gateway Protection) ---
+# Forward-Auth Endpoint (For Nginx / Caddy / Traefik Gateway Protection)
 @app.get("/api/auth/verify")
 def verify_forward_auth(request: Request, user: Dict[str, Any] = Depends(get_current_user)):
     return Response(
@@ -238,6 +250,9 @@ def admin_create_user(req: CreateUserRequest, admin: Dict[str, Any] = Depends(re
 
 @app.patch("/api/admin/users/{user_id}/role")
 def admin_update_role(user_id: int, req: RoleUpdateRequest, admin: Dict[str, Any] = Depends(require_admin)):
+    if req.role not in ("admin", "user"):
+        raise HTTPException(status_code=400, detail="Role must be 'admin' or 'user'")
+
     target = auth_db.get_user_by_id(user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
@@ -246,7 +261,7 @@ def admin_update_role(user_id: int, req: RoleUpdateRequest, admin: Dict[str, Any
         raise HTTPException(status_code=400, detail="You cannot demote your own admin account")
 
     auth_db.update_user_role(user_id, req.role)
-    return {"message": f"Role updated to {req.role}"}
+    return {"message": f"Role for '{target['username']}' updated to '{req.role}'"}
 
 @app.post("/api/admin/users/{user_id}/reset-password")
 def admin_reset_password(user_id: int, req: PasswordResetRequest, admin: Dict[str, Any] = Depends(require_admin)):
@@ -274,6 +289,7 @@ def admin_delete_user(user_id: int, admin: Dict[str, Any] = Depends(require_admi
 
 
 # --- Version Info Endpoint ---
+
 @app.get("/api/version")
 def get_version():
     return {
@@ -283,12 +299,270 @@ def get_version():
         "mobile_target": "2.0"
     }
 
+
 # --- Web UI Pages (Embedded Modern Dark Mode) ---
 
-@app.get("/", response_class=HTMLResponse)
-@app.get("/login", response_class=HTMLResponse)
-def login_page():
-    return HTMLResponse(content="""<!DOCTYPE html>
+def render_dashboard_html(user: Dict[str, Any]) -> str:
+    is_admin = user.get("role") == "admin"
+    username = user.get("username", "user")
+    display_name = user.get("display_name") or username
+    role_str = "ADMIN" if is_admin else "USER"
+    role_badge_class = (
+        "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+        if is_admin
+        else "bg-cyan-500/15 text-cyan-400 border-cyan-500/30"
+    )
+
+    admin_nav_buttons = ""
+    if is_admin:
+        admin_nav_buttons = """
+        <a href="/admin" class="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+          <span>Manage Users</span>
+        </a>
+        <a href="#" data-port="8082" class="service-card-link inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+          <span>System HUD</span>
+        </a>
+        """
+
+    admin_section_html = ""
+    if is_admin:
+        admin_section_html = """
+        <!-- Admin Restricted Section -->
+        <div class="mt-12">
+          <div class="flex items-center space-x-3 mb-6">
+            <div class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></div>
+            <h2 class="text-lg font-bold tracking-tight text-white uppercase text-xs tracking-wider text-slate-400">Core Infrastructure & System Portals (Admin Restricted)</h2>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+
+            <!-- AdGuard Home -->
+            <a href="#" data-port="8080" target="_blank" class="service-card-link group block p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-emerald-500/50 hover:shadow-xl hover:shadow-emerald-500/5 transition">
+              <div class="flex items-start justify-between">
+                <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-xl font-bold">🛡️</div>
+                <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">Port 8080</span>
+              </div>
+              <h3 class="text-base font-bold text-white mt-4 group-hover:text-emerald-400 transition">AdGuard Home</h3>
+              <p class="text-xs text-slate-400 mt-1 line-clamp-2">Network-wide ad, tracker, & malware DNS filtering firewall.</p>
+            </a>
+
+            <!-- Uptime Kuma -->
+            <a href="#" data-port="3001" target="_blank" class="service-card-link group block p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-emerald-500/50 hover:shadow-xl hover:shadow-emerald-500/5 transition">
+              <div class="flex items-start justify-between">
+                <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-xl font-bold">📈</div>
+                <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">Port 3001</span>
+              </div>
+              <h3 class="text-base font-bold text-white mt-4 group-hover:text-emerald-400 transition">Uptime Kuma</h3>
+              <p class="text-xs text-slate-400 mt-1 line-clamp-2">Real-time service health, HTTP ping, and uptime monitoring HUD.</p>
+            </a>
+
+            <!-- Beszel Telemetry -->
+            <a href="#" data-port="8090" target="_blank" class="service-card-link group block p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-emerald-500/50 hover:shadow-xl hover:shadow-emerald-500/5 transition">
+              <div class="flex items-start justify-between">
+                <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-xl font-bold">⚡</div>
+                <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">Port 8090</span>
+              </div>
+              <h3 class="text-base font-bold text-white mt-4 group-hover:text-emerald-400 transition">Beszel Telemetry</h3>
+              <p class="text-xs text-slate-400 mt-1 line-clamp-2">Hardware thermals, CPU load, RAM utilization, and disk I/O metrics.</p>
+            </a>
+
+            <!-- Docker Registry -->
+            <a href="#" data-port="5001" target="_blank" class="service-card-link group block p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-emerald-500/50 hover:shadow-xl hover:shadow-emerald-500/5 transition">
+              <div class="flex items-start justify-between">
+                <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-xl font-bold">🐳</div>
+                <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">Port 5001</span>
+              </div>
+              <h3 class="text-base font-bold text-white mt-4 group-hover:text-emerald-400 transition">Docker Registry</h3>
+              <p class="text-xs text-slate-400 mt-1 line-clamp-2">Private ARM64 container image catalog and distribution hub.</p>
+            </a>
+
+            <!-- Qdrant Vector DB -->
+            <a href="#" data-port="6333" data-path="/dashboard" target="_blank" class="service-card-link group block p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-emerald-500/50 hover:shadow-xl hover:shadow-emerald-500/5 transition">
+              <div class="flex items-start justify-between">
+                <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-xl font-bold">🧠</div>
+                <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">Port 6333</span>
+              </div>
+              <h3 class="text-base font-bold text-white mt-4 group-hover:text-emerald-400 transition">Qdrant Vector DB</h3>
+              <p class="text-xs text-slate-400 mt-1 line-clamp-2">High-dimensional vector search engine for private local AI embeddings.</p>
+            </a>
+
+            <!-- Identity & Access Portal -->
+            <a href="/admin" class="group block p-5 rounded-2xl bg-slate-900/80 border border-purple-500/30 hover:border-purple-500/60 hover:shadow-xl hover:shadow-purple-500/5 transition">
+              <div class="flex items-start justify-between">
+                <div class="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 text-xl font-bold">👥</div>
+                <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">Admin Core</span>
+              </div>
+              <h3 class="text-base font-bold text-white mt-4 group-hover:text-purple-400 transition">User Management Portal</h3>
+              <p class="text-xs text-slate-400 mt-1 line-clamp-2">Add external users, toggle user/admin roles, and reset credentials.</p>
+            </a>
+
+          </div>
+        </div>
+        """
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Argon Homelab Suite v2.0</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {{ background-color: #0b0f19; }}
+  </style>
+</head>
+<body class="text-slate-100 min-h-screen">
+  <!-- Top Navigation -->
+  <header class="border-b border-slate-800 bg-slate-900/60 backdrop-blur sticky top-0 z-30">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-purple-600 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20">
+          A
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <span class="font-bold text-white text-base">Argon Hub</span>
+            <span class="text-[10px] font-mono px-2 py-0.5 rounded-full font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">v2.0</span>
+          </div>
+          <p class="text-[11px] text-slate-400 hidden sm:block">Zero-Trust Tailscale Homelab Suite</p>
+        </div>
+      </div>
+
+      <!-- Right controls -->
+      <div class="flex items-center space-x-3">
+        {admin_nav_buttons}
+        <div class="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800">
+          <div class="w-6 h-6 rounded-lg bg-gradient-to-tr from-cyan-500 to-purple-500 flex items-center justify-center text-xs font-bold text-white">
+            {username[0].upper()}
+          </div>
+          <span class="text-xs font-medium text-slate-200 hidden md:inline">{display_name}</span>
+          <span class="text-[10px] font-mono px-1.5 py-0.5 rounded border {role_badge_class} font-bold">{role_str}</span>
+        </div>
+        <button onclick="handleLogout()" class="p-2 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 transition" title="Sign Out">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Body -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- Greeting Banner -->
+    <div class="p-6 rounded-3xl bg-gradient-to-r from-slate-900 via-slate-900/90 to-cyan-950/40 border border-slate-800 relative overflow-hidden mb-8">
+      <div class="absolute -right-12 -top-12 w-48 h-48 bg-cyan-500/10 rounded-full blur-3xl"></div>
+      <div class="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 class="text-2xl font-extrabold text-white">Welcome back, {display_name}!</h1>
+          <p class="text-xs sm:text-sm text-slate-400 mt-1">
+            {"You have full administrative privileges to manage infrastructure, DNS, and user access." if is_admin else "You have secure member access to your private daily productivity tools and encrypted storage."}
+          </p>
+        </div>
+        <div class="flex items-center space-x-2 text-xs font-mono text-slate-400 bg-slate-950/60 px-3.5 py-2 rounded-xl border border-slate-800 w-fit">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span>Mesh Gateway Active</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Productivity & Privacy Section (Available to ALL authenticated users) -->
+    <div>
+      <div class="flex items-center space-x-3 mb-6">
+        <div class="w-2.5 h-2.5 rounded-full bg-cyan-400"></div>
+        <h2 class="text-lg font-bold tracking-tight text-white uppercase text-xs tracking-wider text-slate-400">Productivity & Privacy Workspace</h2>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+
+        <!-- Vaultwarden -->
+        <a href="#" data-port="8443" data-scheme="https" target="_blank" class="service-card-link group block p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-cyan-500/50 hover:shadow-xl hover:shadow-cyan-500/5 transition">
+          <div class="flex items-start justify-between">
+            <div class="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 text-xl font-bold">🔐</div>
+            <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">Port 8443</span>
+          </div>
+          <h3 class="text-base font-bold text-white mt-4 group-hover:text-cyan-400 transition">Vaultwarden</h3>
+          <p class="text-xs text-slate-400 mt-1 line-clamp-2">Encrypted password vault, 2FA authenticator, and secure notes manager.</p>
+        </a>
+
+        <!-- Stirling-PDF -->
+        <a href="#" data-port="8086" target="_blank" class="service-card-link group block p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-cyan-500/50 hover:shadow-xl hover:shadow-cyan-500/5 transition">
+          <div class="flex items-start justify-between">
+            <div class="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 text-xl font-bold">📄</div>
+            <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">Port 8086</span>
+          </div>
+          <h3 class="text-base font-bold text-white mt-4 group-hover:text-cyan-400 transition">Stirling-PDF</h3>
+          <p class="text-xs text-slate-400 mt-1 line-clamp-2">In-browser private document studio: OCR, conversions, merge, and redaction.</p>
+        </a>
+
+        <!-- PairDrop -->
+        <a href="#" data-port="8088" target="_blank" class="service-card-link group block p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-cyan-500/50 hover:shadow-xl hover:shadow-cyan-500/5 transition">
+          <div class="flex items-start justify-between">
+            <div class="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 text-xl font-bold">📡</div>
+            <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">Port 8088</span>
+          </div>
+          <h3 class="text-base font-bold text-white mt-4 group-hover:text-cyan-400 transition">PairDrop</h3>
+          <p class="text-xs text-slate-400 mt-1 line-clamp-2">Peer-to-peer AirDrop alternative for encrypted file transfers between devices.</p>
+        </a>
+
+        <!-- Syncthing -->
+        <a href="#" data-port="8384" target="_blank" class="service-card-link group block p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-cyan-500/50 hover:shadow-xl hover:shadow-cyan-500/5 transition">
+          <div class="flex items-start justify-between">
+            <div class="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 text-xl font-bold">🔄</div>
+            <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">Port 8384</span>
+          </div>
+          <h3 class="text-base font-bold text-white mt-4 group-hover:text-cyan-400 transition">Syncthing</h3>
+          <p class="text-xs text-slate-400 mt-1 line-clamp-2">Decentralized real-time continuous folder and Obsidian notes sync.</p>
+        </a>
+
+        <!-- Disposable Browser -->
+        <a href="#" data-port="3003" data-scheme="https" target="_blank" class="service-card-link group block p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-cyan-500/50 hover:shadow-xl hover:shadow-cyan-500/5 transition">
+          <div class="flex items-start justify-between">
+            <div class="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 text-xl font-bold">🌐</div>
+            <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">Port 3003</span>
+          </div>
+          <h3 class="text-base font-bold text-white mt-4 group-hover:text-cyan-400 transition">Disposable Browser</h3>
+          <p class="text-xs text-slate-400 mt-1 line-clamp-2">Isolated ephemeral Chromium sandbox via low-latency WebRTC stream.</p>
+        </a>
+
+        <!-- IT-Tools -->
+        <a href="#" data-port="8087" target="_blank" class="service-card-link group block p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-cyan-500/50 hover:shadow-xl hover:shadow-cyan-500/5 transition">
+          <div class="flex items-start justify-between">
+            <div class="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 text-xl font-bold">🧰</div>
+            <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">Port 8087</span>
+          </div>
+          <h3 class="text-base font-bold text-white mt-4 group-hover:text-cyan-400 transition">IT-Tools</h3>
+          <p class="text-xs text-slate-400 mt-1 line-clamp-2">80+ Handy developer tools: token decoders, regex testers, and formatters.</p>
+        </a>
+
+      </div>
+    </div>
+
+    {admin_section_html}
+
+  </main>
+
+  <script>
+    // Bind all service links dynamically to the current hostname (works on Tailscale IP, MagicDNS, and LAN)
+    document.querySelectorAll('.service-card-link').forEach(el => {{
+      const port = el.getAttribute('data-port');
+      const scheme = el.getAttribute('data-scheme') || 'http';
+      const path = el.getAttribute('data-path') || '/';
+      if (port) {{
+        el.href = scheme + '://' + window.location.hostname + ':' + port + path;
+      }}
+    }});
+
+    async function handleLogout() {{
+      await fetch('/api/auth/logout', {{ method: 'POST' }});
+      localStorage.removeItem('argon_token');
+      localStorage.removeItem('argon_user');
+      window.location.href = '/login';
+    }}
+  </script>
+</body>
+</html>"""
+
+
+LOGIN_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -332,20 +606,19 @@ def login_page():
         <input type="password" id="passwordInput" required placeholder="••••••••"
           class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition">
       </div>
-
-      <button type="submit" id="submitBtn"
-        class="w-full py-3 px-4 rounded-xl font-medium text-white bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 transition shadow-lg shadow-cyan-500/25 active:scale-[0.98]">
+      <button type="submit"
+        class="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white font-semibold shadow-lg shadow-cyan-500/20 active:scale-[0.99] transition mt-2">
         Sign In
       </button>
     </form>
 
-    <div class="relative my-6 text-center">
+    <div class="relative my-6">
       <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-slate-800"></div></div>
-      <span class="relative px-3 bg-slate-900 text-xs uppercase tracking-wider text-slate-500">Or continue with</span>
+      <div class="relative flex justify-center text-xs uppercase"><span class="bg-slate-900 px-3 text-slate-500 font-mono">or continue with</span></div>
     </div>
 
-    <!-- Google Sign In Container -->
-    <div id="googleBtnWrapper" class="flex justify-center">
+    <!-- Google One-Tap / Button -->
+    <div class="flex justify-center">
       <div id="g_id_onload"
            data-client_id="YOUR_GOOGLE_CLIENT_ID"
            data-callback="handleGoogleCredential"
@@ -388,11 +661,7 @@ def login_page():
         localStorage.setItem('argon_token', data.token);
         localStorage.setItem('argon_user', JSON.stringify(data.user));
 
-        if (data.user.role === 'admin') {
-          window.location.href = '/admin';
-        } else {
-          window.location.href = 'http://' + window.location.hostname + '/';
-        }
+        window.location.href = '/';
       } catch (err) {
         errAlert.textContent = err.message;
         errAlert.classList.remove('hidden');
@@ -413,11 +682,7 @@ def login_page():
         localStorage.setItem('argon_token', data.token);
         localStorage.setItem('argon_user', JSON.stringify(data.user));
 
-        if (data.user.role === 'admin') {
-          window.location.href = '/admin';
-        } else {
-          window.location.href = 'http://' + window.location.hostname + '/';
-        }
+        window.location.href = '/';
       } catch (err) {
         errAlert.textContent = err.message;
         errAlert.classList.remove('hidden');
@@ -425,12 +690,10 @@ def login_page():
     }
   </script>
 </body>
-</html>
-""")
+</html>"""
 
-@app.get("/admin", response_class=HTMLResponse)
-def admin_page():
-    return HTMLResponse(content="""<!DOCTYPE html>
+
+ADMIN_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -446,199 +709,187 @@ def admin_page():
   <header class="border-b border-slate-800 bg-slate-900/60 backdrop-blur sticky top-0 z-30">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
       <div class="flex items-center space-x-3">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-purple-600 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20">
+        <a href="/" class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-purple-600 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20 hover:opacity-90 transition">
           A
-        </div>
+        </a>
         <div>
-          <span class="font-bold text-lg text-white">Argon Hub</span>
-          <span class="ml-2 text-xs px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-semibold uppercase tracking-wider">Admin Portal</span>
-          <span class="ml-2 text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 font-mono">v2.0</span>
+          <div class="flex items-center space-x-2">
+            <span class="font-bold text-white text-base">Argon Identity Portal</span>
+            <span class="text-[10px] font-mono px-2 py-0.5 rounded-full font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">ADMIN</span>
+          </div>
+          <p class="text-[11px] text-slate-400">Multi-User RBAC & Credentials Management</p>
         </div>
       </div>
-      <div class="flex items-center space-x-4">
-        <span id="currentAdminName" class="text-sm text-slate-300 font-medium"></span>
-        <button onclick="logout()" class="text-xs px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-300 transition">
-          Sign Out
+
+      <div class="flex items-center space-x-3">
+        <a href="/" class="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+          <span>Back to Hub</span>
+        </a>
+        <button onclick="openAddUserModal()" class="px-3.5 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-xs shadow-lg shadow-cyan-500/20 transition flex items-center space-x-1.5">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          <span>Add User</span>
+        </button>
+        <button onclick="logout()" class="p-2 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 transition" title="Sign Out">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
         </button>
       </div>
     </div>
   </header>
 
+  <!-- Content Container -->
   <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-    <!-- Stat Cards -->
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
-      <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl">
-        <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Total Users</span>
-        <p id="statTotalUsers" class="text-3xl font-bold text-white mt-2">-</p>
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight text-white">Registered Users & Access Roles</h1>
+        <p class="text-sm text-slate-400 mt-1">Users added here can connect via Tailscale Node Sharing and authenticate to Argon Hub.</p>
       </div>
-      <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl">
-        <span class="text-xs font-medium text-purple-400 uppercase tracking-wider">Administrators</span>
-        <p id="statAdmins" class="text-3xl font-bold text-purple-400 mt-2">-</p>
-      </div>
-      <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl">
-        <span class="text-xs font-medium text-cyan-400 uppercase tracking-wider">Standard Users</span>
-        <p id="statUsers" class="text-3xl font-bold text-cyan-400 mt-2">-</p>
+      <div class="flex items-center space-x-3 text-xs text-slate-400">
+        <span class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800">
+          <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          <span id="userCount">0 Total Users</span>
+        </span>
       </div>
     </div>
 
-    <!-- Actions & User Table -->
+    <!-- Users Table Card -->
     <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-      <div class="p-6 border-b border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h2 class="text-xl font-bold text-white">Registered User Directory</h2>
-          <p class="text-sm text-slate-400">Manage credentials, Google profile linkage, and role-based permissions.</p>
-        </div>
-        <button onclick="openAddUserModal()" class="px-4 py-2.5 rounded-xl font-medium text-sm text-white bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 shadow-lg shadow-cyan-500/20 transition flex items-center space-x-2">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-          <span>Add New User</span>
-        </button>
-      </div>
-
       <div class="overflow-x-auto">
-        <table class="w-full text-left text-sm text-slate-300">
-          <thead class="bg-slate-950 text-xs uppercase text-slate-400 border-b border-slate-800">
-            <tr>
-              <th class="px-6 py-4">User</th>
-              <th class="px-6 py-4">Email</th>
-              <th class="px-6 py-4">Role</th>
-              <th class="px-6 py-4">Auth Methods</th>
-              <th class="px-6 py-4">Created Date</th>
-              <th class="px-6 py-4 text-right">Actions</th>
+        <table class="w-full text-left border-collapse text-sm">
+          <thead>
+            <tr class="border-b border-slate-800 bg-slate-950/50 text-slate-400 font-mono text-xs uppercase">
+              <th class="py-4 px-6">User</th>
+              <th class="py-4 px-6">Email / Google ID</th>
+              <th class="py-4 px-6">Role</th>
+              <th class="py-4 px-6">Last Active</th>
+              <th class="py-4 px-6 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody id="userTableBody" class="divide-y divide-slate-800">
-            <tr><td colspan="6" class="px-6 py-8 text-center text-slate-500">Loading user profiles...</td></tr>
+          <tbody id="userTableBody" class="divide-y divide-slate-800/60">
+            <tr>
+              <td colspan="5" class="py-8 text-center text-slate-500">Loading user profiles...</td>
+            </tr>
           </tbody>
         </table>
       </div>
-    </div>
-
-    <!-- Tailscale Sharing Guide Card -->
-    <div class="mt-8 bg-slate-900 border border-slate-800 rounded-2xl p-6">
-      <div class="flex items-center space-x-3 mb-4">
-        <div class="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold">
-          TS
-        </div>
-        <div>
-          <h3 class="text-lg font-bold text-white">How to Grant Network Access via Tailscale</h3>
-          <p class="text-xs text-slate-400">Allow users to connect to this Pi from their phone or laptop without opening ports.</p>
-        </div>
-      </div>
-      <ol class="list-decimal list-inside space-y-2 text-sm text-slate-300">
-        <li>Open your <a href="https://login.tailscale.com/admin/machines" target="_blank" class="text-cyan-400 underline hover:text-cyan-300">Tailscale Admin Machines Console</a>.</li>
-        <li>Find <strong>argon-host</strong> (100.123.87.122) and click the <strong>⋯</strong> button on the right.</li>
-        <li>Click <strong>Share...</strong> and enter the user's email address (or generate a share link).</li>
-        <li>When they accept the invite, the Pi appears securely inside their Tailscale app with zero router port forwarding!</li>
-        <li>They can then open the <strong>Argon Mobile Hub</strong> app or browser and log in with their credentials.</li>
-      </ol>
     </div>
   </main>
 
   <!-- Add User Modal -->
   <div id="addUserModal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-    <div class="bg-slate-900 border border-slate-800 w-full max-w-md rounded-2xl p-6 shadow-2xl relative">
-      <h3 class="text-lg font-bold text-white mb-4">Add New User Profile</h3>
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
+      <div class="flex items-center justify-between mb-5">
+        <h3 class="text-lg font-bold text-white">Create New User Profile</h3>
+        <button onclick="closeAddUserModal()" class="text-slate-400 hover:text-white transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+
       <form id="addUserForm" class="space-y-4">
         <div>
-          <label class="block text-xs font-medium text-slate-300 uppercase mb-1">Username</label>
-          <input type="text" id="newUsername" required placeholder="john_doe"
-            class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500">
+          <label class="block text-xs font-medium text-slate-300 uppercase tracking-wider mb-1">Username *</label>
+          <input type="text" id="newUsername" required placeholder="alice"
+            class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 text-sm">
         </div>
         <div>
-          <label class="block text-xs font-medium text-slate-300 uppercase mb-1">Email (Google Account or Email)</label>
-          <input type="email" id="newEmail" required placeholder="john@gmail.com"
-            class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500">
+          <label class="block text-xs font-medium text-slate-300 uppercase tracking-wider mb-1">Email * (for Google SSO or login)</label>
+          <input type="email" id="newEmail" required placeholder="alice@gmail.com"
+            class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 text-sm">
         </div>
         <div>
-          <label class="block text-xs font-medium text-slate-300 uppercase mb-1">Initial Password</label>
-          <input type="password" id="newPassword" required placeholder="Min 6 characters"
-            class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500">
+          <label class="block text-xs font-medium text-slate-300 uppercase tracking-wider mb-1">Initial Password (optional)</label>
+          <input type="password" id="newPassword" placeholder="••••••••"
+            class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 text-sm">
+          <p class="text-[11px] text-slate-500 mt-1">Leave empty if user will only authenticate via Google OIDC.</p>
         </div>
         <div>
-          <label class="block text-xs font-medium text-slate-300 uppercase mb-1">Role Privilege</label>
-          <select id="newRole" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-cyan-500">
-            <option value="user">Standard User (Daily Tools Only)</option>
-            <option value="admin">Administrator (Full Homelab Access)</option>
+          <label class="block text-xs font-medium text-slate-300 uppercase tracking-wider mb-1">Role *</label>
+          <select id="newRole" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-cyan-500 text-sm">
+            <option value="user" selected>User (Restricted to daily productivity tools)</option>
+            <option value="admin">Admin (Full root/management privileges)</option>
           </select>
         </div>
 
-        <div class="flex items-center justify-end space-x-3 mt-6 pt-4 border-t border-slate-800">
-          <button type="button" onclick="closeAddUserModal()" class="px-4 py-2 rounded-xl text-sm text-slate-400 hover:text-white transition">Cancel</button>
-          <button type="submit" class="px-4 py-2 rounded-xl text-sm font-medium text-white bg-cyan-600 hover:bg-cyan-500 transition">Save User</button>
+        <div class="flex items-center justify-end space-x-3 pt-3">
+          <button type="button" onclick="closeAddUserModal()" class="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white transition">Cancel</button>
+          <button type="submit" class="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold shadow-lg shadow-cyan-500/20 transition">Create User</button>
         </div>
       </form>
     </div>
   </div>
 
   <script>
-    let currentAdmin = null;
-
     async function loadData() {
       try {
-        const meRes = await fetch('/api/auth/me');
-        if (!meRes.ok) throw new Error('Not logged in');
-        const meData = await meRes.json();
-        currentAdmin = meData.user;
-        if (currentAdmin.role !== 'admin') {
-          alert('Access denied. Admin role required.');
+        const res = await fetch('/api/admin/users');
+        if (res.status === 401 || res.status === 403) {
           window.location.href = '/login';
           return;
         }
-        document.getElementById('currentAdminName').textContent = currentAdmin.display_name || currentAdmin.username;
-
-        const usersRes = await fetch('/api/admin/users');
-        if (!usersRes.ok) throw new Error('Failed to fetch users');
-        const data = await usersRes.json();
-        renderUsers(data.users);
+        const data = await res.json();
+        renderUsers(data.users || []);
       } catch (err) {
-        window.location.href = '/login';
+        console.error('Failed to load users:', err);
       }
     }
 
     function renderUsers(users) {
-      document.getElementById('statTotalUsers').textContent = users.length;
-      document.getElementById('statAdmins').textContent = users.filter(u => u.role === 'admin').length;
-      document.getElementById('statUsers').textContent = users.filter(u => u.role === 'user').length;
-
+      document.getElementById('userCount').textContent = `${users.length} Total Users`;
       const tbody = document.getElementById('userTableBody');
       if (users.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-6 text-center text-slate-500">No users found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-slate-500">No users found.</td></tr>';
         return;
       }
 
       tbody.innerHTML = users.map(u => {
         const isAdmin = u.role === 'admin';
-        const rolePill = isAdmin 
-          ? '<span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">ADMIN</span>'
-          : '<span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">USER</span>';
-        
-        const authBadges = [];
-        if (u.has_password) authBadges.push('<span class="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700">Password</span>');
-        if (u.google_id) authBadges.push('<span class="text-xs bg-red-500/10 text-red-400 px-2 py-0.5 rounded border border-red-500/20">Google</span>');
+        const roleBadge = isAdmin
+          ? '<span class="px-2.5 py-1 rounded-full text-xs font-bold font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">ADMIN</span>'
+          : '<span class="px-2.5 py-1 rounded-full text-xs font-bold font-mono bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">USER</span>';
+
+        const lastLogin = u.last_login ? new Date(u.last_login).toLocaleString() : '<span class="text-slate-600">Never</span>';
+        const googleTag = u.google_id
+          ? '<span class="inline-flex items-center space-x-1 text-[11px] text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20 font-mono">Google Linked</span>'
+          : '<span class="text-[11px] text-slate-600">Local Only</span>';
 
         return `
-          <tr class="hover:bg-slate-800/40 transition">
-            <td class="px-6 py-4 font-medium text-white flex items-center space-x-2">
-              <div class="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-slate-300 uppercase">
-                ${u.username.substring(0, 2)}
+          <tr class="hover:bg-slate-800/30 transition">
+            <td class="py-4 px-6">
+              <div class="flex items-center space-x-3">
+                <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-600 to-purple-600 flex items-center justify-center font-bold text-white text-xs">
+                  ${(u.username || 'U')[0].toUpperCase()}
+                </div>
+                <div>
+                  <div class="font-semibold text-white">${u.display_name || u.username}</div>
+                  <div class="text-xs text-slate-400 font-mono">@${u.username}</div>
+                </div>
               </div>
-              <span>${u.username}</span>
             </td>
-            <td class="px-6 py-4 text-slate-300">${u.email}</td>
-            <td class="px-6 py-4">${rolePill}</td>
-            <td class="px-6 py-4 space-x-1">${authBadges.join(' ') || '<span class="text-xs text-slate-500">None</span>'}</td>
-            <td class="px-6 py-4 text-slate-400 text-xs">${u.created_at ? u.created_at.substring(0, 10) : '-'}</td>
-            <td class="px-6 py-4 text-right space-x-2">
-              <button onclick="toggleRole(${u.id}, '${isAdmin ? 'user' : 'admin'}')"
-                class="text-xs px-2.5 py-1 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-300 transition">
-                Set to ${isAdmin ? 'User' : 'Admin'}
-              </button>
-              ${u.id !== currentAdmin.id ? `
-                <button onclick="deleteUser(${u.id}, '${u.username}')"
-                  class="text-xs px-2.5 py-1 rounded-lg border border-rose-500/30 text-rose-400 hover:bg-rose-500/10 transition">
-                  Delete
+            <td class="py-4 px-6">
+              <div class="text-slate-200 text-xs">${u.email}</div>
+              <div class="mt-1">${googleTag}</div>
+            </td>
+            <td class="py-4 px-6">
+              ${roleBadge}
+            </td>
+            <td class="py-4 px-6 text-xs text-slate-400 font-mono">
+              ${lastLogin}
+            </td>
+            <td class="py-4 px-6 text-right">
+              <div class="inline-flex items-center space-x-2">
+                <button onclick="toggleRole(${u.id}, '${isAdmin ? 'user' : 'admin'}')"
+                  class="px-2.5 py-1 rounded-lg text-xs font-medium ${isAdmin ? 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20' : 'text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20'} transition">
+                  ${isAdmin ? 'Demote to User' : 'Make Admin'}
                 </button>
-              ` : ''}
+                <button onclick="promptResetPassword(${u.id}, '${u.username}')"
+                  class="px-2.5 py-1 rounded-lg text-xs font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 transition">
+                  Reset Pass
+                </button>
+                <button onclick="deleteUser(${u.id}, '${u.username}')"
+                  class="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition" title="Delete User">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                </button>
+              </div>
             </td>
           </tr>
         `;
@@ -646,7 +897,7 @@ def admin_page():
     }
 
     async function toggleRole(userId, newRole) {
-      if (!confirm(`Are you sure you want to change this user's role to ${newRole.toUpperCase()}?`)) return;
+      if (!confirm(`Are you sure you want to change this user's role to '${newRole}'?`)) return;
       try {
         const res = await fetch(`/api/admin/users/${userId}/role`, {
           method: 'PATCH',
@@ -655,8 +906,7 @@ def admin_page():
         });
         if (!res.ok) {
           const err = await res.json();
-          alert(err.detail || 'Failed to update role');
-          return;
+          throw new Error(err.detail || 'Failed to update role');
         }
         loadData();
       } catch (err) {
@@ -664,14 +914,37 @@ def admin_page():
       }
     }
 
+    async function promptResetPassword(userId, username) {
+      const newPass = prompt(`Enter new password for @${username} (min 6 characters):`);
+      if (!newPass) return;
+      if (newPass.length < 6) {
+        alert('Password must be at least 6 characters long.');
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/admin/users/${userId}/reset-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_password: newPass })
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || 'Failed to reset password');
+        }
+        alert(`Password for @${username} was reset successfully.`);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
     async function deleteUser(userId, username) {
-      if (!confirm(`Are you sure you want to permanently delete user "${username}"?`)) return;
+      if (!confirm(`Are you sure you want to delete user @${username}? This action is permanent.`)) return;
       try {
         const res = await fetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
         if (!res.ok) {
           const err = await res.json();
-          alert(err.detail || 'Failed to delete user');
-          return;
+          throw new Error(err.detail || 'Failed to delete user');
         }
         loadData();
       } catch (err) {
@@ -684,14 +957,13 @@ def admin_page():
     }
     function closeAddUserModal() {
       document.getElementById('addUserModal').classList.add('hidden');
-      document.getElementById('addUserForm').reset();
     }
 
     document.getElementById('addUserForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const username = document.getElementById('newUsername').value.trim();
       const email = document.getElementById('newEmail').value.trim();
-      const password = document.getElementById('newPassword').value;
+      const password = document.getElementById('newPassword').value || null;
       const role = document.getElementById('newRole').value;
 
       try {
@@ -720,5 +992,48 @@ def admin_page():
     loadData();
   </script>
 </body>
-</html>
-""")
+</html>"""
+
+
+@app.get("/", response_class=HTMLResponse)
+@app.get("/dashboard", response_class=HTMLResponse)
+def hub_dashboard(request: Request, argon_token: Optional[str] = Cookie(None)):
+    token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+    elif argon_token:
+        token = argon_token
+
+    if not token:
+        return RedirectResponse(url="/login", status_code=302)
+
+    payload = decode_access_token(token)
+    if not payload:
+        return RedirectResponse(url="/login", status_code=302)
+
+    user = auth_db.get_user_by_id(int(payload.get("sub", 0)))
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    return HTMLResponse(content=render_dashboard_html(user))
+
+@app.get("/login", response_class=HTMLResponse)
+def login_view(request: Request, argon_token: Optional[str] = Cookie(None)):
+    token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+    elif argon_token:
+        token = argon_token
+
+    if token:
+        payload = decode_access_token(token)
+        if payload and auth_db.get_user_by_id(int(payload.get("sub", 0))):
+            return RedirectResponse(url="/", status_code=302)
+
+    return HTMLResponse(content=LOGIN_HTML)
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_view():
+    return HTMLResponse(content=ADMIN_HTML)
