@@ -1,0 +1,13 @@
+services:
+  argon-auth:
+    build: .
+    container_name: argon-auth
+    restart: unless-stopped
+    ports:
+      - "8089:8089"
+    volumes:
+      - ./data:/data
+    env_file:
+      - .env
+    environment:
+      - AUTH_DB_DIR=/data

@@ -1,4 +1,10 @@
 - Core Security & DNS:
+    - Identity & User Access:
+        icon: authentik.png
+        href: http://argon-host:8089/admin
+        description: Multi-user profiles, Google OIDC & RBAC Portal
+        container: argon-auth
+        server: my-docker
     - AdGuard Home:
         icon: adguard-home.png
         href: http://argon-host:8080/
