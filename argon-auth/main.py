@@ -19,8 +19,9 @@ JWT_EXPIRATION_DAYS = int(os.getenv("JWT_EXPIRATION_DAYS", "30"))
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 INITIAL_ADMIN_PASSWORD = os.getenv("INITIAL_ADMIN_PASSWORD", "ArgonAdmin2026!")
 ALLOW_GOOGLE_SIGNUP = os.getenv("ALLOW_GOOGLE_SIGNUP", "true").lower() == "true"
+APP_VERSION = "2.0.0"
 
-app = FastAPI(title="Argon Hub Auth & Identity Gateway", version="1.0.0")
+app = FastAPI(title="Argon Hub Auth & Identity Gateway", version=APP_VERSION)
 
 app.add_middleware(
     CORSMiddleware,
@@ -272,6 +273,16 @@ def admin_delete_user(user_id: int, admin: Dict[str, Any] = Depends(require_admi
     return {"message": f"User '{target['username']}' deleted successfully"}
 
 
+# --- Version Info Endpoint ---
+@app.get("/api/version")
+def get_version():
+    return {
+        "version": APP_VERSION,
+        "suite": "Argon Homelab Suite v2.0",
+        "codename": "Argon Multi-User RBAC",
+        "mobile_target": "2.0"
+    }
+
 # --- Web UI Pages (Embedded Modern Dark Mode) ---
 
 @app.get("/", response_class=HTMLResponse)
@@ -301,7 +312,10 @@ def login_page():
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
         </svg>
       </div>
-      <h1 class="text-2xl font-bold tracking-tight text-white">Argon Hub Sign In</h1>
+      <h1 class="text-2xl font-bold tracking-tight text-white flex items-center justify-center">
+        <span>Argon Hub Sign In</span>
+        <span class="ml-2.5 text-xs px-2.5 py-0.5 rounded-full font-mono bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-semibold">v2.0</span>
+      </h1>
       <p class="text-sm text-slate-400 mt-1">Homelab Identity & Access Gateway</p>
     </div>
 
@@ -438,6 +452,7 @@ def admin_page():
         <div>
           <span class="font-bold text-lg text-white">Argon Hub</span>
           <span class="ml-2 text-xs px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-semibold uppercase tracking-wider">Admin Portal</span>
+          <span class="ml-2 text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 font-mono">v2.0</span>
         </div>
       </div>
       <div class="flex items-center space-x-4">

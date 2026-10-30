@@ -1,4 +1,4 @@
-# My Pi — Homelab & Security Ops Suite
+# My Pi v2.0 — Homelab & Security Ops Suite
 
 A production-ready collection of lightweight security, intelligence, and privacy microservices tailored for the Raspberry Pi 4 (4GB RAM, 32GB microSD).
 
