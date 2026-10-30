@@ -13,6 +13,7 @@ services:
       - WATCHTOWER_NOTIFICATIONS=shoutrrr
       - WATCHTOWER_NOTIFICATION_URL=${WATCHTOWER_NOTIFICATION_URL}
       - WATCHTOWER_NOTIFICATION_TITLE_TAG=Argon-Watchtower
+      - WATCHTOWER_DISABLE_CONTAINERS=stock-watcher,cowrie-threat-reporter,argon-auth
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     logging:

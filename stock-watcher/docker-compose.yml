@@ -1,6 +1,7 @@
 services:
   stock-watcher:
     build: .
+    image: local/stock-watcher:latest
     container_name: stock-watcher
     restart: unless-stopped
     network_mode: host
@@ -16,6 +17,8 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=Asia/Kolkata
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
     logging:
       driver: "json-file"
       options:

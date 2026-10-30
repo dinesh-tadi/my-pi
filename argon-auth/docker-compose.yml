@@ -1,6 +1,7 @@
 services:
   argon-auth:
     build: .
+    image: local/argon-auth:latest
     container_name: argon-auth
     restart: unless-stopped
     ports:
@@ -12,3 +13,5 @@ services:
       - .env
     environment:
       - AUTH_DB_DIR=/data
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
