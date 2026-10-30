@@ -431,6 +431,10 @@ def render_dashboard_html(user: Dict[str, Any]) -> str:
 
       <!-- Right controls -->
       <div class="flex items-center space-x-3">
+        <a href="#" data-port="5050" data-path="/argon-hub.apk" class="service-card-link inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/20 transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          <span class="hidden sm:inline">Get Mobile App</span>
+        </a>
         {admin_nav_buttons}
         <div class="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800">
           <div class="w-6 h-6 rounded-lg bg-gradient-to-tr from-cyan-500 to-purple-500 flex items-center justify-center text-xs font-bold text-white">
@@ -472,6 +476,19 @@ def render_dashboard_html(user: Dict[str, Any]) -> str:
         <h2 class="text-lg font-bold tracking-tight text-white uppercase text-xs tracking-wider text-slate-400">Productivity & Privacy Workspace</h2>
       </div>
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+
+        <!-- Argon Mobile Hub -->
+        <a href="#" data-port="5050" data-path="/argon-hub.apk" class="service-card-link group block p-5 rounded-2xl bg-gradient-to-b from-slate-900 to-slate-900/90 border border-cyan-500/30 hover:border-cyan-400 hover:shadow-xl hover:shadow-cyan-500/10 transition relative overflow-hidden">
+          <div class="flex items-start justify-between">
+            <div class="w-12 h-12 rounded-xl bg-gradient-to-tr from-cyan-600/20 to-purple-600/20 border border-cyan-500/30 flex items-center justify-center text-xl font-bold">📱</div>
+            <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 font-semibold">Download APK</span>
+          </div>
+          <h3 class="text-base font-bold text-white mt-4 group-hover:text-cyan-400 transition flex items-center space-x-1.5">
+            <span>Argon Mobile Hub</span>
+            <svg class="w-4 h-4 text-cyan-400 opacity-0 group-hover:opacity-100 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          </h3>
+          <p class="text-xs text-slate-400 mt-1 line-clamp-2">Direct download Android client (v2.0) with Tailscale auto-mesh & RBAC.</p>
+        </a>
 
         <!-- Vaultwarden -->
         <a href="#" data-port="8443" data-scheme="https" target="_blank" class="service-card-link group block p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-cyan-500/50 hover:shadow-xl hover:shadow-cyan-500/5 transition">
