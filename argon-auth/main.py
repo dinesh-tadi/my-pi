@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Depends, Header, Cookie, Request, Re
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 import auth_db
 
@@ -88,7 +88,7 @@ class GoogleAuthRequest(BaseModel):
 
 class CreateUserRequest(BaseModel):
     username: str
-    email: EmailStr
+    email: str
     password: Optional[str] = None
     role: str = "user"
     display_name: Optional[str] = None
