@@ -59,6 +59,11 @@ mkdir -p argon-auth/data
 
 # 3. Update custom-built containers if code changed
 echo "🔨 Building custom microservices if updated..."
+# Release port 80 from homepage if transitioning to port 8082
+if [ -d "homepage" ] && [ -f "homepage/docker-compose.yml" ]; then
+    (cd homepage && docker compose up -d) || true
+fi
+
 if [ -d "argon-auth" ] && [ -f "argon-auth/docker-compose.yml" ]; then
     echo "➡️ Building & starting argon-auth..."
     [ ! -f "argon-auth/.env" ] && [ -f "argon-auth/.env.example" ] && cp argon-auth/.env.example argon-auth/.env || true

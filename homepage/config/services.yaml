@@ -1,19 +1,19 @@
 - Core Security & DNS:
     - Identity & User Access:
         icon: authentik.png
-        href: http://argon-host:8089/admin
+        href: http://100.123.87.122:8089/admin
         description: Multi-user profiles, Google OIDC & RBAC Portal
         container: argon-auth
         server: my-docker
     - AdGuard Home:
         icon: adguard-home.png
-        href: http://argon-host:8080/
+        href: http://100.123.87.122:8080/
         description: Network-wide ad & tracker blocker
         container: adguard-home
         server: my-docker
     - Vaultwarden:
         icon: bitwarden.png
-        href: https://argon-host:8443/
+        href: https://100.123.87.122:8443/
         description: Encrypted password & API secrets vault
         container: vaultwarden
         server: my-docker
@@ -32,31 +32,31 @@
 - Dev & AI Workspace:
     - Qdrant Vector DB:
         icon: qdrant.png
-        href: http://argon-host:6333/dashboard
+        href: http://100.123.87.122:6333/dashboard
         description: Vector search engine for AI embeddings & RAG
         container: qdrant
         server: my-docker
     - Disposable Browser:
         icon: chromium.png
-        href: https://argon-host:3003/
+        href: https://100.123.87.122:3003/
         description: Selkies WebRTC sandbox cleanroom
         container: chromium-sandbox
         server: my-docker
     - Stirling-PDF:
         icon: stirling-pdf.png
-        href: http://argon-host:8086/
+        href: http://100.123.87.122:8086/
         description: In-browser private document studio & OCR
         container: stirling-pdf
         server: my-docker
     - IT-Tools:
         icon: it-tools.png
-        href: http://argon-host:8087/
+        href: http://100.123.87.122:8087/
         description: Swiss army knife of 80+ developer utilities
         container: it-tools
         server: my-docker
     - PairDrop:
         icon: pairdrop.png
-        href: http://argon-host:8088/
+        href: http://100.123.87.122:8088/
         description: Local peer-to-peer file transfer & AirDrop alternative
         container: pairdrop
         server: my-docker
@@ -64,13 +64,13 @@
 - System & Management:
     - Uptime Kuma:
         icon: uptime-kuma.png
-        href: http://argon-host:3001/
+        href: http://100.123.87.122:3001/
         description: Real-time service uptime & ping monitors
         container: uptime-kuma
         server: my-docker
     - Beszel Telemetry:
         icon: beszel.png
-        href: http://argon-host:8090/
+        href: http://100.123.87.122:8090/
         description: Hardware thermals & system metrics HUD
         container: beszel
         server: my-docker
@@ -81,13 +81,13 @@
         server: my-docker
     - Syncthing:
         icon: syncthing.png
-        href: http://argon-host:8384/
+        href: http://100.123.87.122:8384/
         description: Encrypted P2P file & Obsidian sync
         container: syncthing
         server: my-docker
     - Docker Registry:
         icon: docker.png
-        href: http://argon-host:5001/
+        href: http://100.123.87.122:5001/
         description: Private container catalog & image registry
         container: local-registry-ui
         server: my-docker
