@@ -1,7 +1,0 @@
-{
-  "versionCode": 8,
-  "versionName": "1.6",
-  "releaseDate": "2026-10-25T13:35:21Z",
-  "apkPath": "/argon-hub.apk",
-  "releaseNotes": "Fix bottom navbar window insets and keyboard ime padding in webview"
-}
