@@ -111,7 +111,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Connect to Tailscale
-        uses: tailscale/github-action@v3
+        uses: tailscale/github-action@v4
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
