@@ -1,8 +1,9 @@
 import os
 import sqlite3
 import secrets
+import hashlib
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 import bcrypt
 
 DB_DIR = os.getenv("AUTH_DB_DIR", "/data")
@@ -16,18 +17,46 @@ def get_connection() -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON;")
     return conn
 
+def prehash_password(password: str) -> bytes:
+    """Pre-hashes the password with SHA-256 to produce a 64-character ASCII hex digest.
+    This prevents Bcrypt's 72-byte truncation vulnerability, eliminates multi-byte UTF-8 bugs,
+    and prevents null-byte termination issues.
+    """
+    return hashlib.sha256(password.encode("utf-8")).hexdigest().encode("ascii")
+
 def hash_password(password: str) -> str:
-    pwd_bytes = password.encode("utf-8")[:72]
+    pwd_bytes = prehash_password(password)
     salt = bcrypt.gensalt()
     return bcrypt.hashpw(pwd_bytes, salt).decode("utf-8")
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    if not hashed_password:
-        return False
+def verify_password(plain_password: str, hashed_password: Optional[str]) -> Tuple[bool, bool]:
+    """Verifies a plain password against a stored bcrypt hash.
+    
+    Returns:
+        (is_valid, needs_rehash)
+        is_valid: True if password matches.
+        needs_rehash: True if matched via legacy direct-bcrypt format and should be upgraded.
+    """
+    if not hashed_password or hashed_password.startswith("!"):
+        return False, False
+
+    h_bytes = hashed_password.encode("utf-8")
+
+    # 1. Modern pre-hashed verification (SHA-256 hex digest -> bcrypt)
     try:
-        return bcrypt.checkpw(plain_password.encode("utf-8")[:72], hashed_password.encode("utf-8"))
+        if bcrypt.checkpw(prehash_password(plain_password), h_bytes):
+            return True, False
     except Exception:
-        return False
+        pass
+
+    # 2. Legacy direct bcrypt fallback (supports existing users with automatic rehash upgrade)
+    try:
+        if bcrypt.checkpw(plain_password.encode("utf-8")[:72], h_bytes):
+            return True, True
+    except Exception:
+        pass
+
+    return False, False
 
 def init_db(initial_admin_password: Optional[str] = None):
     with get_connection() as conn:

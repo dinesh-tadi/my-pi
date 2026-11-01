@@ -25,6 +25,37 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 INITIAL_ADMIN_PASSWORD = os.getenv("INITIAL_ADMIN_PASSWORD")
 ALLOW_GOOGLE_SIGNUP = os.getenv("ALLOW_GOOGLE_SIGNUP", "true").lower() == "true"
 
+MIN_PASSWORD_LENGTH = 8
+MAX_PASSWORD_LENGTH = 128
+
+# In-memory rate limiting for brute-force protection
+_failed_login_attempts: Dict[str, list] = {}
+RATE_LIMIT_WINDOW_SECONDS = 300  # 5 minutes
+MAX_FAILED_LOGIN_ATTEMPTS = 5
+
+def _check_login_rate_limit(client_ip: str, login_key: str):
+    now = time.time()
+    for key in (f"ip:{client_ip}", f"user:{login_key.lower().strip()}"):
+        attempts = [t for t in _failed_login_attempts.get(key, []) if now - t < RATE_LIMIT_WINDOW_SECONDS]
+        _failed_login_attempts[key] = attempts
+        if len(attempts) >= MAX_FAILED_LOGIN_ATTEMPTS:
+            wait_time = int(RATE_LIMIT_WINDOW_SECONDS - (now - attempts[0]))
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many failed login attempts. Please wait {max(wait_time, 1)} seconds before trying again."
+            )
+
+def _record_failed_login(client_ip: str, login_key: str):
+    now = time.time()
+    for key in (f"ip:{client_ip}", f"user:{login_key.lower().strip()}"):
+        attempts = [t for t in _failed_login_attempts.get(key, []) if now - t < RATE_LIMIT_WINDOW_SECONDS]
+        attempts.append(now)
+        _failed_login_attempts[key] = attempts
+
+def _clear_failed_logins(client_ip: str, login_key: str):
+    _failed_login_attempts.pop(f"ip:{client_ip}", None)
+    _failed_login_attempts.pop(f"user:{login_key.lower().strip()}", None)
+
 def _get_app_version() -> str:
     version_file = os.path.join(os.path.dirname(__file__), "..", "VERSION")
     if os.path.exists(version_file):
@@ -120,13 +151,36 @@ class PasswordResetRequest(BaseModel):
     new_password: str
 
 
+def _get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
 # --- Public Authentication Endpoints ---
 
 @app.post("/api/auth/login")
-def login(req: LoginRequest, response: Response):
+def login(req: LoginRequest, request: Request, response: Response):
+    client_ip = _get_client_ip(request)
+    _check_login_rate_limit(client_ip, req.login)
+
+    if len(req.password) > MAX_PASSWORD_LENGTH:
+        _record_failed_login(client_ip, req.login)
+        raise HTTPException(status_code=400, detail=f"Password exceeds maximum allowed length ({MAX_PASSWORD_LENGTH} characters)")
+
     user = auth_db.get_user_by_login(req.login)
-    if not user or not auth_db.verify_password(req.password, user.get("password_hash")):
+    is_valid, needs_rehash = auth_db.verify_password(req.password, user.get("password_hash") if user else None)
+
+    if not user or not is_valid:
+        _record_failed_login(client_ip, req.login)
         raise HTTPException(status_code=401, detail="Invalid username/email or password")
+
+    _clear_failed_logins(client_ip, req.login)
+
+    # Progressive security upgrade: if user authenticated via legacy direct bcrypt,
+    # transparently rehash to SHA-256 pre-hashed bcrypt (immune to 72-byte truncation)
+    if needs_rehash:
+        auth_db.update_user_password(user["id"], req.password)
 
     auth_db.update_last_login(user["id"])
     token = create_access_token(user)
@@ -256,6 +310,13 @@ def admin_create_user(req: CreateUserRequest, admin: Dict[str, Any] = Depends(re
     if auth_db.get_user_by_email(req.email):
         raise HTTPException(status_code=400, detail=f"Email '{req.email}' is already registered")
 
+    if req.password:
+        if len(req.password) < MIN_PASSWORD_LENGTH or len(req.password) > MAX_PASSWORD_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Password must be between {MIN_PASSWORD_LENGTH} and {MAX_PASSWORD_LENGTH} characters"
+            )
+
     new_user = auth_db.create_user(
         username=req.username,
         email=req.email,
@@ -286,8 +347,11 @@ def admin_reset_password(user_id: int, req: PasswordResetRequest, admin: Dict[st
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if len(req.new_password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    if len(req.new_password) < MIN_PASSWORD_LENGTH or len(req.new_password) > MAX_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be between {MIN_PASSWORD_LENGTH} and {MAX_PASSWORD_LENGTH} characters"
+        )
 
     auth_db.update_user_password(user_id, req.new_password)
     return {"message": "Password reset successfully"}
@@ -963,10 +1027,14 @@ ADMIN_HTML = """<!DOCTYPE html>
     }
 
     async function promptResetPassword(userId, username) {
-      const newPass = prompt(`Enter new password for @${username} (min 6 characters):`);
+      const newPass = prompt(`Enter new password for @${username} (min 8 characters):`);
       if (!newPass) return;
-      if (newPass.length < 6) {
-        alert('Password must be at least 6 characters long.');
+      if (newPass.length < 8) {
+        alert('Password must be at least 8 characters long.');
+        return;
+      }
+      if (newPass.length > 128) {
+        alert('Password cannot exceed 128 characters.');
         return;
       }
 
