@@ -177,8 +177,8 @@ def login(req: LoginRequest, request: Request, response: Response):
 
     _clear_failed_logins(client_ip, req.login)
 
-    # Progressive security upgrade: if user authenticated via legacy direct bcrypt,
-    # transparently rehash to SHA-256 pre-hashed bcrypt (immune to 72-byte truncation)
+    # Progressive security upgrade: if user authenticated via legacy bcrypt,
+    # transparently rehash to Argon2id (OWASP gold standard, immune to truncation)
     if needs_rehash:
         auth_db.update_user_password(user["id"], req.password)
 

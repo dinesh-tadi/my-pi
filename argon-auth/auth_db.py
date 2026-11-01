@@ -1,14 +1,17 @@
 import os
 import sqlite3
 import secrets
-import hashlib
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError, InvalidHashError
 import bcrypt
 
 DB_DIR = os.getenv("AUTH_DB_DIR", "/data")
 os.makedirs(DB_DIR, exist_ok=True)
 DB_PATH = os.path.join(DB_DIR, "users.db")
+
+_hasher = PasswordHasher()
 
 def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -17,44 +20,41 @@ def get_connection() -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON;")
     return conn
 
-def prehash_password(password: str) -> bytes:
-    """Pre-hashes the password with SHA-256 to produce a 64-character ASCII hex digest.
-    This prevents Bcrypt's 72-byte truncation vulnerability, eliminates multi-byte UTF-8 bugs,
-    and prevents null-byte termination issues.
-    """
-    return hashlib.sha256(password.encode("utf-8")).hexdigest().encode("ascii")
-
 def hash_password(password: str) -> str:
-    pwd_bytes = prehash_password(password)
-    salt = bcrypt.gensalt()
-    return bcrypt.hashpw(pwd_bytes, salt).decode("utf-8")
+    """Hashes a password using Argon2id (OWASP recommended password hashing algorithm).
+    Argon2 has no arbitrary length limit, naturally eliminating truncation attacks,
+    and provides strong memory-hard brute-force resistance.
+    """
+    return _hasher.hash(password)
 
 def verify_password(plain_password: str, hashed_password: Optional[str]) -> Tuple[bool, bool]:
-    """Verifies a plain password against a stored bcrypt hash.
+    """Verifies a plain password against a stored Argon2id or legacy bcrypt hash.
     
     Returns:
         (is_valid, needs_rehash)
         is_valid: True if password matches.
-        needs_rehash: True if matched via legacy direct-bcrypt format and should be upgraded.
+        needs_rehash: True if matched via legacy bcrypt format and should be upgraded to Argon2id.
     """
     if not hashed_password or hashed_password.startswith("!"):
         return False, False
 
-    h_bytes = hashed_password.encode("utf-8")
+    # 1. Modern Argon2id verification
+    if hashed_password.startswith("$argon2"):
+        try:
+            return _hasher.verify(hashed_password, plain_password), False
+        except (VerifyMismatchError, InvalidHashError):
+            return False, False
+        except Exception:
+            return False, False
 
-    # 1. Modern pre-hashed verification (SHA-256 hex digest -> bcrypt)
-    try:
-        if bcrypt.checkpw(prehash_password(plain_password), h_bytes):
-            return True, False
-    except Exception:
-        pass
-
-    # 2. Legacy direct bcrypt fallback (supports existing users with automatic rehash upgrade)
-    try:
-        if bcrypt.checkpw(plain_password.encode("utf-8")[:72], h_bytes):
-            return True, True
-    except Exception:
-        pass
+    # 2. Legacy bcrypt verification (transparent migration to Argon2id upon login)
+    if hashed_password.startswith("$2b$") or hashed_password.startswith("$2a$"):
+        h_bytes = hashed_password.encode("utf-8")
+        try:
+            if bcrypt.checkpw(plain_password.encode("utf-8")[:72], h_bytes):
+                return True, True
+        except Exception:
+            pass
 
     return False, False
 
