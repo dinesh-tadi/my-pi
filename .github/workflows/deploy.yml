@@ -54,14 +54,16 @@ jobs:
                   parts.append(0)
               return tuple(parts)
 
-          base_v = parse_semver('$BASE_VERSION')
-          new_v = parse_semver('$NEW_VERSION')
+          base_str = '$BASE_VERSION'
+          new_str = '$NEW_VERSION'
+          base_v = parse_semver(base_str)
+          new_v = parse_semver(new_str)
 
           if new_v <= base_v:
-              print(f'❌ BLOCKED: VERSION must be upgraded (at least a patch bump)! Base is v{$BASE_VERSION}, found v{$NEW_VERSION}.')
+              print(f'❌ BLOCKED: VERSION must be upgraded (at least a patch bump)! Base is v{base_str}, found v{new_str}.')
               sys.exit(1)
 
-          print(f'✅ Version upgrade gate passed! v{$BASE_VERSION} ➔ v{$NEW_VERSION}')
+          print(f'✅ Version upgrade gate passed! v{base_str} ➔ v{new_str}')
           "
 
       - name: Check Shell Script Syntax
