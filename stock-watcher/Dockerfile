@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install runtime dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --default-timeout=100 --retries 5 -r requirements.txt
 
 # Copy application source
 COPY watcher.py .
