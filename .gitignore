@@ -31,5 +31,7 @@ Thumbs.db
 # Android build outputs
 *.apk
 *.aab
+argon-ota/dist/version.json
+argon-ota/dist/*.apk
 
 argon-mobile-hub/
