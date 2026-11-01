@@ -116,7 +116,7 @@ jobs:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
       - name: Deploy on Raspberry Pi via SSH
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.PI_HOST || '100.123.87.122' }}
           username: ${{ secrets.PI_USER || 'argon' }}
