@@ -1,5 +1,6 @@
 import os
 import time
+import secrets
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 
@@ -13,11 +14,15 @@ from pydantic import BaseModel
 
 import auth_db
 
-JWT_SECRET = os.getenv("JWT_SECRET", "argon-pi-jwt-secret-key-super-secure-change-me-2026")
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    JWT_SECRET = secrets.token_hex(32)
+    print("[WARN] JWT_SECRET is not set in environment! Generated ephemeral secret for this session.")
+
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_DAYS = int(os.getenv("JWT_EXPIRATION_DAYS", "30"))
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
-INITIAL_ADMIN_PASSWORD = os.getenv("INITIAL_ADMIN_PASSWORD", "ArgonAdmin2026!")
+INITIAL_ADMIN_PASSWORD = os.getenv("INITIAL_ADMIN_PASSWORD")
 ALLOW_GOOGLE_SIGNUP = os.getenv("ALLOW_GOOGLE_SIGNUP", "true").lower() == "true"
 
 def _get_app_version() -> str:
