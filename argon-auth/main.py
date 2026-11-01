@@ -19,7 +19,18 @@ JWT_EXPIRATION_DAYS = int(os.getenv("JWT_EXPIRATION_DAYS", "30"))
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 INITIAL_ADMIN_PASSWORD = os.getenv("INITIAL_ADMIN_PASSWORD", "ArgonAdmin2026!")
 ALLOW_GOOGLE_SIGNUP = os.getenv("ALLOW_GOOGLE_SIGNUP", "true").lower() == "true"
-APP_VERSION = "2.0.0"
+
+def _get_app_version() -> str:
+    version_file = os.path.join(os.path.dirname(__file__), "..", "VERSION")
+    if os.path.exists(version_file):
+        try:
+            with open(version_file, "r") as f:
+                return f.read().strip()
+        except Exception:
+            pass
+    return "2.1.0"
+
+APP_VERSION = _get_app_version()
 START_TIME = time.time()
 
 app = FastAPI(title="Argon Hub Auth & Identity Gateway", version=APP_VERSION)

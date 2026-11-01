@@ -18,6 +18,51 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify Version Upgrade Gate
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin main --depth=10
+          
+          if [ ! -f VERSION ]; then
+            echo "❌ ERROR: Root 'VERSION' file is missing in PR!"
+            exit 1
+          fi
+          
+          NEW_VERSION=$(tr -d ' \r\n' < VERSION)
+          
+          if git show origin/main:VERSION > /dev/null 2>&1; then
+            BASE_VERSION=$(git show origin/main:VERSION | tr -d ' \r\n')
+          else
+            BASE_VERSION="2.0.0"
+          fi
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔍 Base (main) Version: v${BASE_VERSION}"
+          echo "🔍 PR (branch) Version: v${NEW_VERSION}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          
+          python3 -c "
+          import sys
+
+          def parse_semver(v):
+              clean = v.strip().lstrip('v').split('-')[0]
+              parts = [int(p) for p in clean.split('.')]
+              while len(parts) < 3:
+                  parts.append(0)
+              return tuple(parts)
+
+          base_v = parse_semver('$BASE_VERSION')
+          new_v = parse_semver('$NEW_VERSION')
+
+          if new_v <= base_v:
+              print(f'❌ BLOCKED: VERSION must be upgraded (at least a patch bump)! Base is v{$BASE_VERSION}, found v{$NEW_VERSION}.')
+              sys.exit(1)
+
+          print(f'✅ Version upgrade gate passed! v{$BASE_VERSION} ➔ v{$NEW_VERSION}')
+          "
 
       - name: Check Shell Script Syntax
         run: |
