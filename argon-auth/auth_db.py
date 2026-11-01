@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import secrets
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 import bcrypt
@@ -28,7 +29,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     except Exception:
         return False
 
-def init_db(initial_admin_password: str = "ArgonAdmin2026!"):
+def init_db(initial_admin_password: Optional[str] = None):
     with get_connection() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -48,13 +49,24 @@ def init_db(initial_admin_password: str = "ArgonAdmin2026!"):
         cursor = conn.execute("SELECT COUNT(*) AS count FROM users;")
         count = cursor.fetchone()["count"]
         if count == 0:
-            admin_hash = hash_password(initial_admin_password)
+            if initial_admin_password:
+                admin_pwd = initial_admin_password
+                generated = False
+            else:
+                admin_pwd = secrets.token_urlsafe(16)
+                generated = True
+
+            admin_hash = hash_password(admin_pwd)
             conn.execute("""
                 INSERT INTO users (username, email, password_hash, role, display_name)
                 VALUES (?, ?, ?, 'admin', 'System Administrator');
             """, ("admin", "admin@argon.local", admin_hash))
             conn.commit()
-            print(f"[AUTH DB] Seeded initial admin account: 'admin' (Password: {initial_admin_password})")
+            if generated:
+                print(f"[AUTH DB] Seeded initial admin account: 'admin' with random password: {admin_pwd}")
+                print("[AUTH DB] IMPORTANT: Please save or change this password immediately!")
+            else:
+                print("[AUTH DB] Seeded initial admin account: 'admin' from INITIAL_ADMIN_PASSWORD.")
 
 def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
     with get_connection() as conn:
