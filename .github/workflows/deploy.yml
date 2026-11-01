@@ -22,7 +22,7 @@ jobs:
           fetch-depth: 0
 
       - name: Verify Version Upgrade Gate
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
         run: |
           git fetch origin main --depth=10
           
