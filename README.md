@@ -1,6 +1,91 @@
-# My Pi v2.0 — Homelab & Security Ops Suite
+# My Pi v2.1 — Homelab & Security Ops Suite
 
-A production-ready collection of lightweight security, intelligence, and privacy microservices tailored for the Raspberry Pi 4 (4GB RAM, 32GB microSD).
+A production-ready collection of lightweight security, intelligence, and privacy microservices tailored for the Raspberry Pi (4GB RAM, 32GB microSD), complete with automated self-healing, cloud dead-man's switch, and native mobile companion client.
+
+---
+
+## 🏛️ System Architecture
+
+```mermaid
+flowchart TD
+    subgraph Client["📱 Client Layer (Argon Mobile Hub)"]
+        UI["Jetpack Compose UI\n(Native Hub & HUD)"]
+        NM["NetworkManager\n(10s Active Heartbeat)"]
+        OTA["OtaManager\n(OTA Auto-Update Client)"]
+        AUTH_CLIENT["AuthManager\n(JWT Session & RBAC)"]
+        
+        UI --> NM
+        UI --> OTA
+        UI --> AUTH_CLIENT
+    end
+
+    subgraph Network["🌐 Transport & Overlay Network"]
+        LAN["Home Wi-Fi / LAN\n(192.168.1.10)"]
+        TS["Tailscale Mesh VPN\n(100.123.87.122 / argon-host)"]
+        STUN["WebRTC / STUN\n(Google & Cloudflare STUN)"]
+    end
+
+    NM -->|"Direct LAN (400ms)"| LAN
+    NM -->|"WireGuard Tunnel (1200ms)"| TS
+    UI -->|"P2P File Transfer"| STUN
+
+    subgraph Server["🍓 Argon Pi Infrastructure (Raspberry Pi 5)"]
+        subgraph Ingress["Gateway & Ingress"]
+            CADDY["Caddy Reverse Proxy\n(Port 80 & 5050)"]
+            AUTH_SRV["Argon Auth Gateway\n(FastAPI • Port 8089)\n/api/health • /api/auth • /api/version"]
+        end
+
+        subgraph Containers["Docker Microservices (17 Stacks)"]
+            direction TB
+            VW["Vaultwarden (Passwords)"]
+            SYNC["Syncthing (Multi-Device Sync)"]
+            KUMA["Uptime Kuma (Service Monitor)"]
+            BESZEL["Beszel (System Metrics)"]
+            CROWD["CrowdSec (Intrusion Defense)"]
+            COWRIE["Cowrie (SSH Honeypot)"]
+            WATCHER["Stock Watcher & AI Summarizer"]
+            TOWER["Watchtower (Nightly Container Updates)"]
+            OTHER["PairDrop, Stirling-PDF, IT-Tools, etc."]
+        end
+
+        subgraph BackgroundJobs["Self-Healing & Cron Daemons"]
+            CRON_PING["healthchecks-ping.sh\n(Every 1 min cron)"]
+            CRON_BACKUP["backup-pi.sh\n(Every 6 hrs atomic SQLite & .env)"]
+            ON_BOOT["on-boot-check.sh\n(@reboot SQLite PRAGMA integrity check)"]
+        end
+    end
+
+    LAN --> CADDY
+    TS --> CADDY
+    LAN --> AUTH_SRV
+    TS --> AUTH_SRV
+    CADDY --> Containers
+
+    subgraph CloudOps["☁️ External Monitoring & Alerting"]
+        HC["Healthchecks.io\n(Dead-Man's Switch • 2 min grace)"]
+        TG["Telegram Bot API\n(@PiSentinelBot)"]
+    end
+
+    CRON_PING -->|"1-min pulse"| HC
+    HC -->|"Downtime Webhook"| TG
+    CRON_BACKUP -->|"Backup Report"| TG
+    ON_BOOT -->|"Integrity Report"| TG
+    COWRIE -->|"Threat Alerts"| TG
+    WATCHER -->|"Market / News Summaries"| TG
+
+    subgraph DevOps["🚀 CI/CD & Delivery (GitHub Actions)"]
+        REPO_PI["my-pi (Main Server Repo)\n• PR Version Gate (VERSION)\n• Deploy to Pi via Tailscale SSH"]
+        REPO_APP["my-pi-mobile (Android Repo)\n• PR Version Gate (versionCode + 1)\n• Fast Kotlin Lint Check\n• Release Build & Deploy to :5050 OTA"]
+    end
+
+    REPO_PI -->|"SSH Deploy"| Server
+    REPO_APP -->|"Deploy APK & version.json"| CADDY
+```
+
+> [!NOTE]
+> For the in-depth architectural breakdown including sequence diagrams, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+---
 
 ## 🚀 Active Services & Web Dashboards
 
@@ -23,14 +108,66 @@ A production-ready collection of lightweight security, intelligence, and privacy
 
 ---
 
-## ⚡ Power Loss & Resilience Architecture
+## ⚡ Power Loss, Resilience & Self-Healing Architecture
 
 The Pi is engineered to withstand abrupt power cuts and automatically recover with zero data loss:
 * **Automatic Boot Orchestration:** Docker daemon and Tailscale are systemd-enabled (`systemctl enable docker tailscaled`).
-* **Container Self-Healing:** Every service runs with `restart: unless-stopped` — all 10 containers launch immediately when power is restored.
-* **Database Crash Resilience:** SQLite databases (`stock-watcher`, `vaultwarden`, `uptime-kuma`) utilize Write-Ahead Logging (`WAL` mode) with atomic transaction journals.
-* **Ext4 Filesystem Journaling:** Partition mounted with metadata journaling (`has_journal`) and `pass=1` in `/etc/fstab` for automatic `fsck` integrity checks on boot.
-* **Hardware Watchdog:** Broadcom BCM2835 hardware watchdog enabled (`RuntimeWatchdogSec=15s`) to automatically reboot if the kernel ever locks up.
+* **Container Self-Healing:** Every service runs with `restart: unless-stopped` — all 17 containers launch immediately when power is restored.
+* **On-Boot SQLite PRAGMA Integrity Checks:** `@reboot` cron executes `scripts/on-boot-check.py` to verify all 5 SQLite databases (`users.db`, `vaultwarden.db`, `uptime-kuma.db`, `beszel.db`, `stock-watcher.db`). If corruption is found, it automatically hot-swaps the corrupt database with the latest healthy snapshot from Syncthing.
+* **6-Hourly Atomic Snapshots:** Background cron runs `scripts/backup-pi.sh` using SQLite `PRAGMA vacuum_into` for zero-lock atomic backups, archived to Syncthing and verified on Telegram.
+* **External Dead-Man's Switch (Healthchecks.io):** A 1-minute cron (`scripts/healthchecks-ping.sh`) pings Healthchecks.io. If power or internet drops for > 2 minutes, Healthchecks cloud triggers a direct Telegram alert to `@PiSentinelBot`.
+* **Hardware Watchdog:** Broadcom hardware watchdog enabled (`RuntimeWatchdogSec=15s`) to automatically reboot if the kernel ever freezes.
+
+### On-Boot Self-Healing Flow
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Power as Power / Kernel Event
+    participant Pi as Raspberry Pi 5
+    participant BootCheck as on-boot-check.py (@reboot)
+    participant DB as SQLite Databases (*.db)
+    participant Backup as Syncthing Backup Archive
+    participant TG as Telegram Bot (@PiSentinelBot)
+
+    Power->>Pi: Sudden Power Loss / Reboot
+    Pi->>BootCheck: Trigger @reboot cron
+    BootCheck->>DB: PRAGMA integrity_check on 5 Databases
+    
+    alt Integrity Check Succeeded (ok)
+        BootCheck->>TG: ✅ Pi Boot Clean: 5/5 DBs intact, 17/17 containers running
+    else Database Corruption Detected
+        BootCheck->>Backup: Locate latest atomic backup (dbs/<name>.db)
+        Backup-->>BootCheck: Stream healthy snapshot
+        BootCheck->>DB: Hot-swap corrupt database
+        BootCheck->>TG: 🚨 Self-Healing Auto-Restored <name>.db from backup!
+    end
+```
+
+### Cloud Dead-Man's Switch (Healthchecks.io)
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Pi as Raspberry Pi 5
+    participant HC as Healthchecks.io (Cloud)
+    participant TG as Telegram API
+    actor User as Telegram Client (@PiSentinelBot)
+
+    loop Every 60 Seconds
+        Pi->>HC: curl -fsS https://hc-ping.com/b91e...
+        HC-->>HC: Reset Grace Timer (2 minutes)
+    end
+
+    Note over Pi: Power outage or network interruption occurs
+    HC-->>HC: 60s missed pulse
+    HC-->>HC: 120s grace period expired (Trigger DOWN)
+    HC->>TG: POST /bot<TOKEN>/sendMessage (Webhook)
+    TG->>User: 🚨 [Argon-Pi] DOWN ALERT! Heartbeat missed > 2 min
+
+    Note over Pi: Power restored, Pi boots & crons resume
+    Pi->>HC: curl -fsS https://hc-ping.com/b91e...
+    HC->>TG: POST /bot<TOKEN>/sendMessage (Webhook)
+    TG->>User: ✅ [Argon-Pi] RECOVERED! Pi is back online
+```
 
 ---
 
