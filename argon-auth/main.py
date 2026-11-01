@@ -1,7 +1,7 @@
 import os
 import time
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import jwt
 import httpx
@@ -20,6 +20,7 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 INITIAL_ADMIN_PASSWORD = os.getenv("INITIAL_ADMIN_PASSWORD", "ArgonAdmin2026!")
 ALLOW_GOOGLE_SIGNUP = os.getenv("ALLOW_GOOGLE_SIGNUP", "true").lower() == "true"
 APP_VERSION = "2.0.0"
+START_TIME = time.time()
 
 app = FastAPI(title="Argon Hub Auth & Identity Gateway", version=APP_VERSION)
 
@@ -286,6 +287,20 @@ def admin_delete_user(user_id: int, admin: Dict[str, Any] = Depends(require_admi
 
     auth_db.delete_user(user_id)
     return {"message": f"User '{target['username']}' deleted successfully"}
+
+
+# --- Health & Pulse Endpoint ---
+
+@app.get("/api/health")
+def get_health():
+    uptime = int(time.time() - START_TIME)
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "uptime_seconds": uptime,
+        "version": APP_VERSION,
+        "host": os.uname().nodename
+    }
 
 
 # --- Version Info Endpoint ---
