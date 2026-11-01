@@ -4,40 +4,61 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    groups:
+      github-actions:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
 
   - package-ecosystem: "pip"
     directory: "/argon-auth"
     schedule:
       interval: "weekly"
+    groups:
+      argon-auth-deps:
+        patterns: ["*"]
     open-pull-requests-limit: 5
 
   - package-ecosystem: "pip"
     directory: "/stock-watcher"
     schedule:
       interval: "weekly"
+    groups:
+      stock-watcher-deps:
+        patterns: ["*"]
     open-pull-requests-limit: 5
 
   - package-ecosystem: "pip"
     directory: "/cowrie-honeypot/reporter"
     schedule:
       interval: "weekly"
+    groups:
+      cowrie-reporter-deps:
+        patterns: ["*"]
     open-pull-requests-limit: 5
 
   - package-ecosystem: "docker"
     directory: "/argon-auth"
     schedule:
       interval: "weekly"
+    groups:
+      docker-images:
+        patterns: ["*"]
     open-pull-requests-limit: 5
 
   - package-ecosystem: "docker"
     directory: "/stock-watcher"
     schedule:
       interval: "weekly"
+    groups:
+      docker-images:
+        patterns: ["*"]
     open-pull-requests-limit: 5
 
   - package-ecosystem: "docker"
     directory: "/cowrie-honeypot/reporter"
     schedule:
       interval: "weekly"
+    groups:
+      docker-images:
+        patterns: ["*"]
     open-pull-requests-limit: 5
