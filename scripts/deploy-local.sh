@@ -55,12 +55,15 @@ mkdir -p argon-ota/dist
 mkdir -p argon-auth/data
 
 # Ensure backup cron job (every 6 hours) & boot integrity check
-chmod +x scripts/backup-pi.sh scripts/backup-pi.py scripts/on-boot-check.sh scripts/on-boot-check.py
+chmod +x scripts/backup-pi.sh scripts/backup-pi.py scripts/on-boot-check.sh scripts/on-boot-check.py scripts/healthchecks-ping.sh
 (crontab -l 2>/dev/null | grep -q 'backup-pi.sh') || (
     (crontab -l 2>/dev/null; echo '0 */6 * * * /home/argon/american-pi/scripts/backup-pi.sh >> /home/argon/american-pi/syncthing/Sync/backups/backup.log 2>&1') | crontab -
 ) || true
 (crontab -l 2>/dev/null | grep -q 'on-boot-check.sh') || (
     (crontab -l 2>/dev/null; echo '@reboot /home/argon/american-pi/scripts/on-boot-check.sh >> /home/argon/american-pi/syncthing/Sync/backups/boot.log 2>&1') | crontab -
+) || true
+(crontab -l 2>/dev/null | grep -q 'healthchecks-ping.sh') || (
+    (crontab -l 2>/dev/null; echo '* * * * * /home/argon/american-pi/scripts/healthchecks-ping.sh > /dev/null 2>&1') | crontab -
 ) || true
 
 # Ensure honeypot permissions if required
