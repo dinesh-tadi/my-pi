@@ -1,0 +1,22 @@
+services:
+  llm-honeypot:
+    build: .
+    image: local/llm-honeypot:latest
+    container_name: llm-honeypot
+    restart: unless-stopped
+    ports:
+      # TCP interactive terminal trap
+      - "2224:2224"
+      # Web honeypot terminal console
+      - "8091:8091"
+    env_file:
+      - ../stock-watcher/.env
+    environment:
+      - TCP_PORT=2224
+      - HTTP_PORT=8091
+      - PYTHONUNBUFFERED=1
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

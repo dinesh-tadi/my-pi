@@ -1,0 +1,52 @@
+# ==============================================================================
+# Nocturnal OSINT Web Agent Configuration
+# ==============================================================================
+# Edit this file to customize targets, stack keywords, feeds, and schedule.
+
+schedule:
+  # Sweep interval in minutes (default: run every 360 minutes / 6 hours, plus 02:00 nocturnal sweep)
+  sweep_interval_minutes: 360
+  # Hour of day (0-23 UTC) to send the morning Telegram briefing
+  morning_briefing_hour_utc: 7
+
+# 1. Automatic Zero-Day & CVE Monitoring for your Pi's exact stack:
+vulnerability_watch:
+  enabled: true
+  stack_keywords:
+    - "fastapi"
+    - "docker"
+    - "vaultwarden"
+    - "adguard"
+    - "crowdsec"
+    - "python"
+    - "argon2"
+    - "linux kernel aarch64"
+    - "openssh"
+  sources:
+    - name: "The Hacker News"
+      url: "https://feeds.feedburner.com/TheHackersNews"
+    - name: "Bleeping Computer"
+      url: "https://www.bleepingcomputer.com/feed/"
+
+# 2. General Tech & Cybersecurity Feeds
+rss_intelligence:
+  - name: "Hacker News Security & Zero-Days"
+    url: "https://hnrss.org/newest?q=security+OR+vulnerability+OR+zero-day"
+  - name: "Hacker News AI & LLM"
+    url: "https://hnrss.org/newest?q=Gemini+OR+Anthropic+OR+LocalLLM"
+
+# 3. Custom Web Watchers (Price drops, inventory changes, flight alerts, blogs)
+# Add any URL you want the agent to monitor:
+custom_watchers:
+  - name: "Raspberry Pi Foundation News"
+    url: "https://www.raspberrypi.com/news/"
+    alert_keywords: ["Compute Module", "Raspberry Pi 5", "update", "vulnerability"]
+  - name: "Tailscale Blog"
+    url: "https://tailscale.com/blog/"
+    alert_keywords: ["release", "security", "update", "feature"]
+
+# 4. Long-Term Semantic Vector Memory
+qdrant:
+  host: "qdrant"
+  port: 6333
+  collection: "osint_intelligence"

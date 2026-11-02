@@ -53,6 +53,9 @@ mkdir -p qdrant/storage
 mkdir -p crowdsec/{config,data}
 mkdir -p argon-ota/dist
 mkdir -p argon-auth/data
+mkdir -p ghost-lan-hunter/data
+mkdir -p usb-forensics/quarantine
+mkdir -p nocturnal-osint/config
 
 # Ensure backup cron job (every 6 hours) & boot integrity check
 chmod +x scripts/backup-pi.sh scripts/backup-pi.py scripts/on-boot-check.sh scripts/on-boot-check.py scripts/healthchecks-ping.sh
@@ -90,6 +93,31 @@ fi
 if [ -d "cowrie-honeypot" ] && [ -f "cowrie-honeypot/docker-compose.yml" ]; then
     echo "➡️ Building & starting cowrie-threat-reporter..."
     (cd cowrie-honeypot && docker compose up -d --build)
+fi
+
+if [ -d "llm-honeypot" ] && [ -f "llm-honeypot/docker-compose.yml" ]; then
+    echo "➡️ Building & starting llm-honeypot..."
+    (cd llm-honeypot && docker compose up -d --build)
+fi
+
+if [ -d "noise-machine" ] && [ -f "noise-machine/docker-compose.yml" ]; then
+    echo "➡️ Building & starting noise-machine..."
+    (cd noise-machine && docker compose up -d --build)
+fi
+
+if [ -d "ghost-lan-hunter" ] && [ -f "ghost-lan-hunter/docker-compose.yml" ]; then
+    echo "➡️ Building & starting ghost-lan-hunter..."
+    (cd ghost-lan-hunter && docker compose up -d --build)
+fi
+
+if [ -d "usb-forensics" ] && [ -f "usb-forensics/docker-compose.yml" ]; then
+    echo "➡️ Building & starting usb-forensics..."
+    (cd usb-forensics && docker compose up -d --build)
+fi
+
+if [ -d "nocturnal-osint" ] && [ -f "nocturnal-osint/docker-compose.yml" ]; then
+    echo "➡️ Building & starting nocturnal-osint..."
+    (cd nocturnal-osint && docker compose up -d --build)
 fi
 
 # 4. Update standard services

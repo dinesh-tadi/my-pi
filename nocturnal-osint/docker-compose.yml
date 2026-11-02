@@ -1,0 +1,25 @@
+services:
+  nocturnal-osint:
+    build: .
+    image: local/nocturnal-osint:latest
+    container_name: nocturnal-osint
+    restart: unless-stopped
+    ports:
+      - "8095:8095"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - ../stock-watcher/.env
+    environment:
+      - CONFIG_FILE=/app/config/osint_targets.yml
+      - METRICS_PORT=8095
+      - QDRANT_HOST=host.docker.internal
+      - QDRANT_PORT=6333
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./config:/app/config
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

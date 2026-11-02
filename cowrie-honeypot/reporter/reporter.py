@@ -83,15 +83,16 @@ def analyze_attack_with_gemini(session_data: Dict[str, Any]) -> Optional[str]:
         return None
 
     prompt = (
-        "You are an expert security incident analyst evaluating an SSH honeypot capture.\n"
+        "You are an elite counter-intelligence and incident response analyst evaluating an SSH honeypot capture.\n"
         f"Attacker IP: {session_data.get('src_ip')} ({session_data.get('geo')})\n"
         f"Credentials Attempted: {credentials[:10]}\n"
         f"Commands Executed: {commands[:15]}\n"
         f"File Downloads: {downloads}\n\n"
-        "Provide a concise, 2-to-3 sentence executive assessment:\n"
-        "- Attacker Type: (Automated Bot / Worm / Manual Operator)\n"
-        "- Probable Tooling & Intent: (e.g. Mirai variant, SSH brute-force, reverse shell dropper)\n"
-        "- Threat Level: [LOW / MEDIUM / HIGH / CRITICAL]"
+        "Provide a concise, 3-to-4 bullet evaluation:\n"
+        "• Classification: Automated Botnet / Script Kiddie / Persistent Human Operator\n"
+        "• Tooling & Intent: (e.g. Mirai worm, SSH dictionary attack, cryptominer dropper, reconnaissance)\n"
+        "• Psychological Profile: Concise, witty 1-sentence behavioral breakdown of the attacker\n"
+        "• Threat Severity: [LOW / MEDIUM / HIGH / CRITICAL]"
     )
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"

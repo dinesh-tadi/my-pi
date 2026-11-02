@@ -1,0 +1,7 @@
+httpx==0.28.1
+fastapi==0.162.0
+uvicorn==0.54.0
+pyyaml==6.0.2
+qdrant-client==1.13.2
+beautifulsoup4==4.13.3
+python-dotenv==1.0.1
