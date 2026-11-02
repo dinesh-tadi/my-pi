@@ -35,14 +35,19 @@ flowchart TD
             AUTH_SRV["Argon Auth Gateway\n(FastAPI • Port 8089)\n/api/health • /api/auth • /api/version"]
         end
 
-        subgraph Containers["Docker Microservices (17 Stacks)"]
+        subgraph Containers["Docker Microservices (22 Stacks)"]
             direction TB
             VW["Vaultwarden (Passwords)"]
             SYNC["Syncthing (Multi-Device Sync)"]
             KUMA["Uptime Kuma (Service Monitor)"]
             BESZEL["Beszel (System Metrics)"]
             CROWD["CrowdSec (Intrusion Defense)"]
-            COWRIE["Cowrie (SSH Honeypot)"]
+            COWRIE["Cowrie (SSH/Telnet Honeypot)"]
+            LLM_POT["LLM Shell Honeypot (Gemini Deception)"]
+            LAN_HUNT["Ghost LAN Hunter (MAC Rotation Filter)"]
+            USB_SEC["USB Forensics Bay (Auto-quarantine)"]
+            OSINT["Nocturnal OSINT Agent (Qdrant & Gemini)"]
+            NOISE["Noise Machine (ISP Profile Poisoning)"]
             WATCHER["Stock Watcher & AI Summarizer"]
             TOWER["Watchtower (Nightly Container Updates)"]
             OTHER["PairDrop, Stirling-PDF, IT-Tools, etc."]
@@ -71,6 +76,10 @@ flowchart TD
     CRON_BACKUP -->|"Backup Report"| TG
     ON_BOOT -->|"Integrity Report"| TG
     COWRIE -->|"Threat Alerts"| TG
+    LLM_POT -->|"Live Keystrokes & Probes"| TG
+    LAN_HUNT -->|"Rogue Device Alerts"| TG
+    USB_SEC -->|"Storage Threat Dossiers"| TG
+    OSINT -->|"Morning Threat Briefing"| TG
     WATCHER -->|"Market / News Summaries"| TG
 
     subgraph DevOps["🚀 CI/CD & Delivery (GitHub Actions)"]

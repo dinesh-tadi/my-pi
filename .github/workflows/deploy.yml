@@ -105,7 +105,7 @@ jobs:
             echo "❌ Validation failed for one or more Docker Compose files."
             exit 1
           fi
-          echo "✅ All 17 Docker Compose stacks are syntactically valid!"
+          echo "✅ All 22 Docker Compose stacks are syntactically valid!"
 
   deploy:
     name: Deploy to Raspberry Pi

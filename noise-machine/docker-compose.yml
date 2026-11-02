@@ -1,0 +1,18 @@
+services:
+  noise-machine:
+    build: .
+    image: local/noise-machine:latest
+    container_name: noise-machine
+    restart: unless-stopped
+    ports:
+      - "8092:8092"
+    environment:
+      - METRICS_PORT=8092
+      - MIN_DELAY_SECS=45
+      - MAX_DELAY_SECS=150
+      - PYTHONUNBUFFERED=1
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

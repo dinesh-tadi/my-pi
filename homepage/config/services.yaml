@@ -97,3 +97,35 @@
         description: Private container catalog & image registry
         container: local-registry-ui
         server: my-docker
+
+- Cyber Deception & Intelligence:
+    - LLM Shell Honeypot:
+        icon: terminal.png
+        href: http://100.123.87.122:8091/
+        description: Gemini-powered interactive terminal trap (TCP:2224 / HTTP:8091)
+        container: llm-honeypot
+        server: my-docker
+    - Ghost LAN Hunter:
+        icon: shield.png
+        href: http://100.123.87.122:8093/devices
+        description: Rogue device sentinel with MAC rotation filter & learning mode
+        container: ghost-lan-hunter
+        server: my-docker
+    - USB Forensics Bay:
+        icon: usb.png
+        href: http://100.123.87.122:8094/health
+        description: Auto-quarantine & Gemini payload analysis for USB storage
+        container: usb-forensics
+        server: my-docker
+    - Nocturnal OSINT Agent:
+        icon: search.png
+        href: http://100.123.87.122:8095/api/briefing
+        description: Qdrant semantic memory & Gemini morning threat briefings
+        container: nocturnal-osint
+        server: my-docker
+    - Noise Machine:
+        icon: radio.png
+        href: http://100.123.87.122:8092/metrics
+        description: Telemetry & ISP profile poisoning background worker
+        container: noise-machine
+        server: my-docker

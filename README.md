@@ -1,4 +1,4 @@
-# My Pi v2.1 — Homelab & Security Ops Suite
+# My Pi v2.2 — Homelab, Security & Cyber-Intelligence Suite
 
 A production-ready collection of lightweight security, intelligence, and privacy microservices tailored for the Raspberry Pi (4GB RAM, 32GB microSD), complete with automated self-healing, cloud dead-man's switch, and native mobile companion client.
 
@@ -35,14 +35,19 @@ flowchart TD
             AUTH_SRV["Argon Auth Gateway\n(FastAPI • Port 8089)\n/api/health • /api/auth • /api/version"]
         end
 
-        subgraph Containers["Docker Microservices (17 Stacks)"]
+        subgraph Containers["Docker Microservices (22 Stacks)"]
             direction TB
             VW["Vaultwarden (Passwords)"]
             SYNC["Syncthing (Multi-Device Sync)"]
             KUMA["Uptime Kuma (Service Monitor)"]
             BESZEL["Beszel (System Metrics)"]
             CROWD["CrowdSec (Intrusion Defense)"]
-            COWRIE["Cowrie (SSH Honeypot)"]
+            COWRIE["Cowrie (SSH/Telnet Honeypot)"]
+            LLM_POT["LLM Shell Honeypot (Gemini Deception)"]
+            LAN_HUNT["Ghost LAN Hunter (MAC Rotation Filter)"]
+            USB_SEC["USB Forensics Bay (Auto-quarantine)"]
+            OSINT["Nocturnal OSINT Agent (Qdrant & Gemini)"]
+            NOISE["Noise Machine (ISP Profile Poisoning)"]
             WATCHER["Stock Watcher & AI Summarizer"]
             TOWER["Watchtower (Nightly Container Updates)"]
             OTHER["PairDrop, Stirling-PDF, IT-Tools, etc."]
@@ -71,6 +76,10 @@ flowchart TD
     CRON_BACKUP -->|"Backup Report"| TG
     ON_BOOT -->|"Integrity Report"| TG
     COWRIE -->|"Threat Alerts"| TG
+    LLM_POT -->|"Live Keystrokes & Probes"| TG
+    LAN_HUNT -->|"Rogue Device Alerts"| TG
+    USB_SEC -->|"Storage Threat Dossiers"| TG
+    OSINT -->|"Morning Threat Briefing"| TG
     WATCHER -->|"Market / News Summaries"| TG
 
     subgraph DevOps["🚀 CI/CD & Delivery (GitHub Actions)"]
@@ -97,7 +106,12 @@ flowchart TD
 | **AdGuard Home** | `53` (DNS), `3000`/`8080` (HTTP) | `http://192.168.1.10:8080` | Network-wide ad & telemetry sinkhole |
 | **Chromium Sandbox** | `3002` (HTTP), `3003` (HTTPS) | `https://192.168.1.10:3003` | Disposable WebRTC cleanroom browser |
 | **Uptime Kuma** | `3001` (HTTP) | `http://192.168.1.10:3001` | Service health & latency monitor |
-| **Cowrie Honeypot** | `2222` (SSH), `2223` (Telnet) | `ssh -p 2222 root@pi` | Deception honeypot & attack logger |
+| **Cowrie Honeypot** | `2222` (SSH), `2223` (Telnet) | `ssh -p 2222 root@pi` | Deception honeypot & attack logger with Gemini 2.5 Flash threat dossiers |
+| **LLM Shell Honeypot** | `2224` (TCP), `8091` (HTTP) | `http://192.168.1.10:8091/` | Gemini-powered interactive root deception shell & honey-tokens |
+| **Ghost LAN Hunter** | `8093` (HTTP) | `http://192.168.1.10:8093/devices` | Rogue device sentinel with MAC rotation filter & 24h learning baseline |
+| **USB Forensics Bay** | `8094` (HTTP) | `http://192.168.1.10:8094/scans` | Read-only auto-quarantine sandbox & Gemini malware risk analyzer |
+| **Nocturnal OSINT Agent** | `8095` (HTTP) | `http://192.168.1.10:8095/api/briefing` | Qdrant semantic memory & automated morning threat briefings |
+| **Noise Machine** | `8092` (HTTP) | `http://192.168.1.10:8092/metrics` | Autonomous background web traffic & ISP profile poisoning worker |
 | **CrowdSec** | `8081` (LAPI) | Background Daemon | Collaborative threat defense & firewall bouncer |
 | **Vaultwarden** | `8085` (HTTP), `8443` (HTTPS) | `https://192.168.1.10:8443` | Self-hosted Bitwarden password & secret vault |
 | **Stirling-PDF** | `8086` (HTTP) | `http://192.168.1.10:8086` | 100% private in-browser document editor & OCR |
@@ -193,6 +207,35 @@ Send any of these commands to **Pi Sentinel** in Telegram:
 * `/status` — View current bot configuration and database metrics
 * `/list` — Display active stock/crypto/security keywords
 * `/add <word>` / `/remove <word>` — Modify watchlist tickers dynamically
+
+---
+
+## 🛡️ Cyber-Deception, Forensics & OSINT Suite (v2.2)
+
+### 1. LLM Shell Honeypot Trap (`llm-honeypot`)
+* **Ports:** `2224` (TCP interactive terminal), `8091` (Web deception terminal)
+* **How it Works:** Connected to Google Gemini 2.5 Flash, simulating a compromised research node (`darpa-quantum-vault-04`). Attackers can type any bash command (`ls`, `cat /etc/shadow`, `sudo -l`, `whoami`) and receive authentic Linux outputs with fake honey-tokens, fake credentials, and fake bitcoin wallets containing zip-bombs.
+* **Alerting:** Live keystrokes and sessions are dispatched directly to Telegram in real time.
+
+### 2. Ghost-in-the-LAN Sentinel (`ghost-lan-hunter`)
+* **Port:** `8093` (HTTP Metrics & Device Registry: `http://192.168.1.10:8093/devices`)
+* **Smart MAC Randomization Filter:** Automatically detects IEEE 802 Locally Administered Address (LAA) bits. When modern iPhones, Androids, or MacBooks refresh their private Wi-Fi addresses, it correlates them via DHCP Hostname and mDNS, updating `known_devices.json` silently without false alarms.
+* **Learning Mode:** Features an initial 24-hour quiet learning baseline before switching to active alerting for true uncataloged strangers.
+
+### 3. USB Forensics & Quarantine Bay (`usb-forensics`)
+* **Port:** `8094` (Forensic API & Audit Log: `http://192.168.1.10:8094/scans`)
+* **Auto-Quarantine Sandbox:** Automatically mounts external USB flash drives strictly read-only (`mount -o ro,nosuid,nodev,noexec`).
+* **Deep File Scan:** Recursively walks the drive, computes SHA-256 hashes, flags high-risk executables, scripts, autorun files, and LNK exploits, and queries Gemini 2.5 Flash for forensic risk classification before sending an incident dossier to Telegram.
+
+### 4. Nocturnal OSINT Web Agent (`nocturnal-osint`)
+* **Port:** `8095` (REST API & Semantic Query: `http://192.168.1.10:8095/api/briefing`)
+* **Configuration:** Driven by `nocturnal-osint/config/osint_targets.yml` (supports stack CVE keywords, RSS feeds, custom web watchers, and schedules).
+* **Qdrant Vector Storage:** Automatically vectorizes threat intelligence with Gemini Embeddings (3072 dims) and stores it in the local Qdrant collection (`osint_intelligence`).
+* **Morning Briefing:** Dispatches a synthesized 4-bullet Morning Threat & Tech Briefing to Telegram at 7:00 AM UTC.
+
+### 5. Noise Machine (`noise-machine`)
+* **Port:** `8092` (HTTP Metrics: `http://192.168.1.10:8092/metrics`)
+* **ISP Profile Poisoning:** Background async worker (~15 MB RAM) issuing benign requests with rotating User-Agents and human jitter delays across diverse domains (Wikipedia, arXiv, NASA, GitHub, OpenAlex), completely destroying ISP behavioral profiling telemetry.
 
 ---
 
