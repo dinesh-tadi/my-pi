@@ -95,7 +95,7 @@ def analyze_attack_with_gemini(session_data: Dict[str, Any]) -> Optional[str]:
         "• Threat Severity: [LOW / MEDIUM / HIGH / CRITICAL]"
     )
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.2, "maxOutputTokens": 200}
