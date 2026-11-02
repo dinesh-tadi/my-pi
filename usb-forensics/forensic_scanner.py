@@ -98,7 +98,7 @@ def analyze_with_gemini(flagged_files: List[Dict[str, Any]], dev_info: Dict[str,
         "2. Risk rating: [SAFE / SUSPICIOUS / MALICIOUS] and whether it is safe to open on host systems."
     )
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.2, "maxOutputTokens": 200}
