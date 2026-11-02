@@ -77,13 +77,22 @@ def init_qdrant():
         logger.warning("Qdrant initialization note: %s", e)
 
 
+def clean_telegram_html(text: str) -> str:
+    """Strips markdown fences and converts unsupported tags to clean Telegram HTML."""
+    text = text.replace("```html", "").replace("```", "")
+    text = text.replace("<ul>", "").replace("</ul>", "")
+    text = text.replace("<li>", "• ").replace("</li>", "\n")
+    text = text.replace("<p>", "").replace("</p>", "\n")
+    return text.strip()
+
+
 async def send_telegram_alert(text: str):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
+        "text": clean_telegram_html(text),
         "parse_mode": "HTML",
         "disable_web_page_preview": True
     }
@@ -240,7 +249,8 @@ async def generate_gemini_briefing(findings: List[Dict[str, str]]) -> str:
         "You are an elite cyber threat intelligence officer synthesizing an executive morning briefing for a homelab operator.\n"
         "Here are raw intelligence signals gathered overnight:\n\n"
         f"{summary_input}\n\n"
-        "Generate a concise, 4-to-5 bullet morning threat & tech briefing formatted in clean HTML (using <b>, <i>, <code> tags):\n"
+        "Generate a concise, 4-to-5 bullet morning threat & tech briefing formatted in clean HTML (using only <b>, <i>, <code> tags):\n"
+        "Do NOT wrap output in markdown code blocks or ```html. Do NOT use <ul> or <li> tags; use unicode bullets '• '.\n"
         "1. 🛡️ <b>Stack Vulnerabilities & CVEs:</b> Any issues directly impacting FastAPI, Docker, Vaultwarden, AdGuard, CrowdSec, Python 3.12, Linux kernel.\n"
         "2. 📰 <b>Top Cyber Threats:</b> 1 or 2 high-impact zero-days or industry breaches.\n"
         "3. 💡 <b>Tech & AI Signals:</b> 1 key advancement in AI or systems.\n"
